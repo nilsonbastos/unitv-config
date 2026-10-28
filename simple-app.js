@@ -78,10 +78,10 @@
             
             <div class="form-stack" style="margin-top:16px">
               <div class="field-grid">
-                <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AB:6A" spellcheck="true" autocomplete="on"></div>
-                <div class="field"><label for="single-user">User ID</label><input id="single-user" value="538746151" inputmode="numeric" spellcheck="true"></div>
+                <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AB:6A" spellcheck="false" autocomplete="off"></div>
+                <div class="field"><label for="single-user">User ID</label><input id="single-user" value="538746151" inputmode="numeric" spellcheck="false"></div>
               </div>
-              <div class="field"><label for="single-device">Device ID em Base64</label><input id="single-device" placeholder="Gerado automaticamente" spellcheck="true" autocomplete="on"></div>
+              <div class="field"><label for="single-device">Device ID em Base64</label><input id="single-device" placeholder="Gerado automaticamente" spellcheck="false" autocomplete="off"></div>
               <div class="field-grid">
                 <div class="field"><label for="single-folder">Nome da pasta</label><input id="single-folder" value="CONFIG_1"></div>
                 <div class="field"><label for="single-channel">Código do canal</label><input id="single-channel" value="SBTHD"></div>
