@@ -153,7 +153,7 @@
   }
 
   function generateConfig(options = {}) {
-    const mac = String(options.mac || "9C:00:D3:EC:AA:06").trim().toUpperCase();
+    const mac = String(options.mac || "9C:00:D3:EC:AA:01").trim().toUpperCase();
     if (!/^([0-9A-F]{1}:){5}[0-9A-F]{1}$/.test(mac)) {
       throw new Error("MAC inválido. Use o formato 00:11:22:AA:BB:CC.");
     }
