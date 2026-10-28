@@ -201,68 +201,45 @@
         return;
       }
       const action = event.target.closest("[data-action]")?.dataset.action;
-      if (action === "generate-config") {
-        const suffix = Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase();
-        q(this, "#single-mac").value = `9C:00:D3:EC:AA:${suffix}`;
-        q(this, "#single-user").value = ConfigCore.randomUserId();
-        q(this, "#single-folder").value = `CONFIG_${Date.now().toString().slice(-6)}`;
-        q(this, "#single-device").value = "";
-        this.generate();
-        this.toast("Nova config gerada.");
-      }
-      if (action === "copy") this.copyCurrent();
-      if (action === "download-current") this.downloadCurrent();
-      if (action === "download-config") this.downloadConfig();
-      if (action === "download-zip") this.downloadZip();
-      if (action === "save-folder") this.saveFolder();
-    }
+if (action === "generate-config") {
+  // Novo endereço MAC
+  const macBytes = new Uint8Array(1);
+  crypto.getRandomValues(macBytes);
 
-    async copyCurrent() {
-      const content = this.files[this.currentFile] || "";
-      try {
-        await navigator.clipboard.writeText(content);
-      } catch (_) {
-        const field = document.createElement("textarea");
-        field.value = content;
-        document.body.append(field);
-        field.select();
-        document.execCommand("copy");
-        field.remove();
-      }
-      this.toast("Conteúdo copiado.");
-    }
+  const suffix = macBytes[0]
+    .toString(16)
+    .padStart(2, "0")
+    .toUpperCase();
 
-    downloadCurrent() {
-      if (this.currentFile === ".config") return this.downloadConfig();
-      downloadBlob(new Blob([this.files[this.currentFile] || ""], { type: "application/octet-stream" }), this.currentFile);
-      this.toast(`${this.currentFile} baixado.`);
-    }
+  q(this, "#single-mac").value =
+    `9C:00:D3:EC:AA:${suffix}`;
 
-    downloadConfig() {
-      const config = this.generate();
-      if (!config || !config.files[".config"]) return this.toast("Gere ou carregue um arquivo primeiro.", "error");
-      downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
-      this.toast("Arquivo .config baixado com a extensão correta.");
-    }
+  // Novo User ID
+  const userBytes = new Uint32Array(1);
+  crypto.getRandomValues(userBytes);
 
-    downloadZip() {
-      const config = this.generate();
-      if (!config) return;
-      downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
-      this.toast("Pacote ZIP baixado.");
-    }
+  const userId = String(
+    500000000 + (userBytes[0] % 100000000)
+  );
 
-    async saveFolder() {
-      const config = this.generate();
-      if (!config) return;
-      try {
-        const result = await saveConfig(config);
-        if (result === "folder") this.toast(`Arquivos salvos na pasta ${config.folder_name}.`);
-        if (result === "zip") this.toast("Este navegador não permite selecionar uma pasta aqui; baixei um ZIP com os arquivos.");
-      } catch (error) {
-        this.toast(`Falha ao salvar: ${error.message}`, "error");
-      }
-    }
+  q(this, "#single-user").value = userId;
+
+  // Novo nome de pasta
+  q(this, "#single-folder").value =
+    `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
+
+  // Limpa o Device ID para gerar outro
+  q(this, "#single-device").value = "";
+
+  // Gera os arquivos com os novos dados
+  const config = this.generate();
+
+  if (config) {
+    this.toast("Nova config gerada com sucesso.");
+  } else {
+    this.toast("Erro ao gerar configuração.", "error");
+  }
+}
   }
 
   class AppsView extends ViewElement {
