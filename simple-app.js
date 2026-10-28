@@ -1,42 +1,44 @@
-function downloadBlob(blob, filename) {
-  // Dentro do APK Android
-  if (window.AndroidFiles &&
-      typeof window.AndroidFiles.saveFile === "function") {
+(function () {
+  function downloadBlob(blob, filename) {
+    // Dentro do APK Android
+    if (
+      window.AndroidFiles &&
+      typeof window.AndroidFiles.saveFile === "function"
+    ) {
+      const reader = new FileReader();
 
-    const reader = new FileReader();
+      reader.onloadend = function () {
+        const base64 = reader.result.split(",")[1];
 
-    reader.onloadend = function () {
-      const base64 = reader.result.split(",")[1];
+        window.AndroidFiles.saveFile(
+          base64,
+          filename,
+          blob.type || "application/octet-stream"
+        );
+      };
 
-      window.AndroidFiles.saveFile(
-        base64,
-        filename,
-        blob.type || "application/octet-stream"
-      );
-    };
+      reader.onerror = function () {
+        console.error("Erro ao preparar arquivo");
+      };
 
-    reader.onerror = function () {
-      console.error("Erro ao preparar arquivo");
-    };
+      reader.readAsDataURL(blob);
+      return;
+    }
 
-    reader.readAsDataURL(blob);
-    return;
+    // No navegador Chrome
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = filename;
+    link.style.display = "none";
+
+    document.body.append(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
-
-  // No navegador Chrome
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = filename;
-  link.style.display = "none";
-
-  document.body.append(link);
-  link.click();
-  link.remove();
-
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
-}
 
   function randomConfigFilename() {
     const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
