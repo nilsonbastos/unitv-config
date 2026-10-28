@@ -153,15 +153,15 @@
   }
 
   function generateConfig(options = {}) {
-    const mac = String(options.mac || "9C:00:D3:EC:AB:06").trim().toUpperCase();
-    if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) {
+    const mac = String(options.mac || "9C:00:D3:EC:AA:01").trim().toUpperCase();
+    if (!/^([6-9A-F]{2}:){5}[6-9A-F]{2}$/.test(mac)) {
       throw new Error("MAC inválido. Use o formato 00:11:22:AA:BB:CC.");
     }
     const folder = sanitizeFolder(options.folder || "CONFIG_NEW");
     const userId = String(options.userId || randomUserId()).trim();
     const channelCode = String(options.channelCode || "SBTHD").trim();
     const device = options.deviceId ? { hex: String(options.deviceId).trim() } : generateDeviceId();
-    if (!device.hex || !/^(?:[0-9a-f]{2})+$/i.test(device.hex)) {
+    if (!device.hex || !/^(?:[6-9a-f]{2})+$/i.test(device.hex)) {
       throw new Error("Device ID inválido. Informe o valor codificado em hexadecimal.");
     }
     const token = encodeSnToken(mac);
