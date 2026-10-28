@@ -4,6 +4,89 @@
 
   const qa = (root, selector) =>
     Array.from(root.querySelectorAll(selector));
+  
+const HISTORY_KEY = "unitv_config_used_ids_v1";
+
+function loadHistory() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(HISTORY_KEY) || "{}"
+    );
+
+    return {
+      macs: new Set(saved.macs || []),
+      users: new Set(saved.users || []),
+      devices: new Set(saved.devices || [])
+    };
+  } catch (error) {
+    console.error("Erro ao ler histórico:", error);
+    throw new Error("Não foi possível ler o histórico.");
+  }
+}
+
+function saveHistory(history) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify({
+    macs: [...history.macs],
+    users: [...history.users],
+    devices: [...history.devices]
+  }));
+}
+
+function randomUniqueMac(history) {
+  const prefix = "9C:00:D3:EC:AA:";
+
+  if (history.macs.size >= 256) {
+    const usedPrefix = [...history.macs]
+      .filter(mac => mac.startsWith(prefix));
+
+    if (usedPrefix.length >= 256) {
+      throw new Error(
+        "Todos os 256 MACs deste prefixo já foram usados."
+      );
+    }
+  }
+
+  const available = [];
+
+  for (let i = 0; i < 256; i++) {
+    const mac = prefix +
+      i.toString(16).padStart(2, "0").toUpperCase();
+
+    if (!history.macs.has(mac)) {
+      available.push(mac);
+    }
+  }
+
+  if (!available.length) {
+    throw new Error("Não há MACs disponíveis.");
+  }
+
+  const bytes = new Uint32Array(1);
+  const limit = Math.floor(4294967296 / available.length)
+    * available.length;
+
+  do {
+    crypto.getRandomValues(bytes);
+  } while (bytes[0] >= limit);
+
+  return available[bytes[0] % available.length];
+}
+
+function randomUniqueUser(history) {
+  for (let i = 0; i < 1000; i++) {
+    const bytes = new Uint32Array(1);
+    crypto.getRandomValues(bytes);
+
+    const user = String(
+      500000000 + (bytes[0] % 100000000)
+    );
+
+    if (!history.users.has(user)) return user;
+  }
+
+  throw new Error("Não foi possível gerar User ID único.");
+}
+
 
   function downloadBlob(blob, filename) {
     // Dentro do APK Android
@@ -201,45 +284,111 @@
         return;
       }
       const action = event.target.closest("[data-action]")?.dataset.action;
-if (action === "generate-config") {
-  // Novo endereço MAC
-  const macBytes = new Uint8Array(1);
-  crypto.getRandomValues(macBytes);
+      if (action === "generate-config") {
+        try {
+          const history = loadHistory();
+          const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
+            .map(selector => q(this, selector).value);
+          const mac = randomUniqueMac(history);
+          const userId = randomUniqueUser(history);
+          let config = null;
+          try {
+            q(this, "#single-mac").value = mac;
+            q(this, "#single-user").value = userId;
+            q(this, "#single-folder").value =
+              `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              q(this, "#single-device").value = "";
+              config = this.makeConfig();
+              if (!history.devices.has(config.device_id_hex)) break;
+              config = null;
+            }
+            if (!config) throw new Error("Não foi possível gerar Device ID inédito.");
+            history.macs.add(mac);
+            history.users.add(userId);
+            history.devices.add(config.device_id_hex);
+            saveHistory(history);
+          } catch (error) {
+            ["#single-mac", "#single-user", "#single-folder", "#single-device"]
+              .forEach((selector, index) => { q(this, selector).value = oldValues[index]; });
+            throw error;
+          }
+          this.files = config.files;
+          q(this, "#single-device").value = ConfigCore.decodeHex(config.device_id_hex).text;
+          this.updatePreview();
+          this.toast("Nova config gerada e registrada no histórico.");
+        } catch (error) {
+          console.error("Erro ao gerar configuração:", error);
+          this.toast(error.message || "Erro ao gerar configuração.", "error");
+        }
+        return;
+      }
+      if (action === "copy") this.copyCurrent();
+      if (action === "download-current") this.downloadCurrent();
+      if (action === "download-config") this.downloadConfig();
+      if (action === "download-zip") this.downloadZip();
+      if (action === "save-folder") this.saveFolder();
+    }
 
-  const suffix = macBytes[0]
-    .toString(16)
-    .padStart(2, "0")
-    .toUpperCase();
+    currentConfig() {
+      // Usa os dados exibidos, sem sortear novos identificadores ao baixar.
+      return this.makeConfig();
+    }
 
-  q(this, "#single-mac").value =
-    `9C:00:D3:EC:AA:${suffix}`;
+    async copyCurrent() {
+      const content = this.files[this.currentFile] || "";
+      try {
+        await navigator.clipboard.writeText(content);
+      } catch (_) {
+        const field = document.createElement("textarea");
+        field.value = content;
+        document.body.append(field);
+        field.select();
+        document.execCommand("copy");
+        field.remove();
+      }
+      this.toast("Conteúdo copiado.");
+    }
 
-  // Novo User ID
-  const userBytes = new Uint32Array(1);
-  crypto.getRandomValues(userBytes);
+    downloadCurrent() {
+      if (this.currentFile === ".config") return this.downloadConfig();
+      const content = this.files[this.currentFile] || "";
+      if (!content) return this.toast("Gere a configuração primeiro.", "error");
+      downloadBlob(new Blob([content], { type: "application/octet-stream" }), this.currentFile);
+      this.toast(`${this.currentFile} baixado.`);
+    }
 
-  const userId = String(
-    500000000 + (userBytes[0] % 100000000)
-  );
+    downloadConfig() {
+      try {
+        const config = this.currentConfig();
+        if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
+        downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
+        this.toast("Arquivo .config enviado para download.");
+      } catch (error) {
+        this.toast(`Falha no download: ${error.message}`, "error");
+      }
+    }
 
-  q(this, "#single-user").value = userId;
+    downloadZip() {
+      try {
+        const config = this.currentConfig();
+        downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
+        this.toast("Pacote ZIP enviado para download.");
+      } catch (error) {
+        this.toast(`Falha no ZIP: ${error.message}`, "error");
+      }
+    }
 
-  // Novo nome de pasta
-  q(this, "#single-folder").value =
-    `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
-
-  // Limpa o Device ID para gerar outro
-  q(this, "#single-device").value = "";
-
-  // Gera os arquivos com os novos dados
-  const config = this.generate();
-
-  if (config) {
-    this.toast("Nova config gerada com sucesso.");
-  } else {
-    this.toast("Erro ao gerar configuração.", "error");
-  }
-}
+    async saveFolder() {
+      try {
+        const config = this.currentConfig();
+        const result = await saveConfig(config);
+        if (result === "folder") this.toast(`Arquivos salvos na pasta ${config.folder_name}.`);
+        if (result === "zip") this.toast("Download do ZIP iniciado.");
+      } catch (error) {
+        this.toast(`Falha ao salvar: ${error.message}`, "error");
+      }
+    }
   }
 
   class AppsView extends ViewElement {
