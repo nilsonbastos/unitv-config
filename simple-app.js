@@ -1,4 +1,10 @@
+
 (function () {
+  const q = (root, selector) => root.querySelector(selector);
+
+  const qa = (root, selector) =>
+    Array.from(root.querySelectorAll(selector));
+
   function downloadBlob(blob, filename) {
     // Dentro do APK Android
     if (
@@ -25,7 +31,7 @@
       return;
     }
 
-    // No navegador Chrome
+    // Download normal no navegador
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
