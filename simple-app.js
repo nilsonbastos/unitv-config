@@ -261,13 +261,13 @@
     connectedCallback() {
       this.innerHTML = `
         <header class="topbar"><div class="topbar-inner">
-          <div class="brand"><img src="img/logo.webp" alt=""><div><div class="brand-name">Config Studio</div><div class="brand-kicker">ferramentas locais · sem servidor</div></div></div>
-          <div class="local-signal" title="Execução no navegador">Local</div>
+          <div class="brand"><img src="img/logo.webp" alt=""><div><div class="brand-name">Plataforma de Configurações</div><div class="brand-kicker">ferramentas locais</div></div></div>
+          <div class="local-signal" title="Execução no navegador">Gerando Config...</div>
         </div></header>
         <main class="workspace">
-          <div class="page-heading"><div><p class="eyebrow">CONFIGURAÇÕES</p><h1 data-page-title>Gerador .config</h1></div><p class="heading-note" data-page-note>Gerador de arquivo .config para UniTV Free.</p></div>
+          <div class="page-heading"><div><p class="eyebrow">CONFIGURAÇÕES</p><h1 data-page-title>Gerador .config / Nilson Bastos</h1></div><p class="heading-note" data-page-note>Gerador de arquivo 2027</p></div>
           <nav class="view-tabs" aria-label="Seções">
-            <button class="view-tab" data-view="generator" aria-selected="true">Gerador</button>
+            <button class="view-tab" data-view="generator" aria-selected="true">Gerador 2027</button>
             <button class="view-tab" data-view="apps" aria-selected="false">Aplicativos</button>
           </nav>
           <section class="view-panel" data-panel="generator"><single-generator-view></single-generator-view></section>
@@ -275,11 +275,11 @@
           <footer class="footer-note">
             <span>HTML5 · CSS3 · JS Vanilla· Web Components</span>
             <nav class="footer-actions" aria-label="Links do projeto">
-              <a class="support-link" href="https://github.com/nilsonbastos/unitv-config" target="_blank" rel="noopener noreferrer">
+              <a class="support-link" href="https://w.app/wm8bxj" target="_blank" rel="noopener noreferrer">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                 Contribuir no GitHub
               </a>
-              <a class="support-link support-pix" href="https://link.mercadopago.com.br/nilsonbastos" target="_blank" rel="noopener noreferrer">
+              <a class="support-link support-pix" href="https://w.app/wm8bxj" target="_blank" rel="noopener noreferrer">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7-4.35-9.33-8.28C.4 8.5 3.4 4 7.9 4c1.7 0 3.2.8 4.1 2.1C12.9 4.8 14.4 4 16.1 4c4.5 0 7.5 4.5 5.2 8.72C19 16.65 12 21 12 21Z"/></svg>
                 Apoiar via Pix
               </a>
