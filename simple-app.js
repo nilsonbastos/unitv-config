@@ -1,20 +1,42 @@
-(function () {
-  "use strict";
+function downloadBlob(blob, filename) {
+  // Dentro do APK Android
+  if (window.AndroidFiles &&
+      typeof window.AndroidFiles.saveFile === "function") {
 
-  const q = (root, selector) => root.querySelector(selector);
-  const qa = (root, selector) => Array.from(root.querySelectorAll(selector));
+    const reader = new FileReader();
 
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.style.display = "none";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    reader.onloadend = function () {
+      const base64 = reader.result.split(",")[1];
+
+      window.AndroidFiles.saveFile(
+        base64,
+        filename,
+        blob.type || "application/octet-stream"
+      );
+    };
+
+    reader.onerror = function () {
+      console.error("Erro ao preparar arquivo");
+    };
+
+    reader.readAsDataURL(blob);
+    return;
   }
+
+  // No navegador Chrome
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+
+  document.body.append(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
 
   function randomConfigFilename() {
     const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
