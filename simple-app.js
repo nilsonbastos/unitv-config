@@ -108,7 +108,7 @@
             
             <div class="form-stack" style="margin-top:16px">
               <div class="field-grid">
-                <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AB:6A" spellcheck="false" autocomplete="off"></div>
+                <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AB:AA" spellcheck="false" autocomplete="off"></div>
                 <div class="field"><label for="single-user">User ID</label><input id="single-user" value="538746151" inputmode="numeric" spellcheck="false"></div>
               </div>
               <div class="field"><label for="single-device">Device ID em Base64</label><input id="single-device" placeholder="Gerado automaticamente" spellcheck="false" autocomplete="off"></div>
@@ -203,7 +203,7 @@
       const action = event.target.closest("[data-action]")?.dataset.action;
       if (action === "generate-config") {
         const suffix = Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase();
-        q(this, "#single-mac").value = `9C:00:D3:EC:AB:${suffix}`;
+        q(this, "#single-mac").value = `9C:00:D3:EC:AA:${suffix}`;
         q(this, "#single-user").value = ConfigCore.randomUserId();
         q(this, "#single-folder").value = `CONFIG_${Date.now().toString().slice(-6)}`;
         q(this, "#single-device").value = "";
