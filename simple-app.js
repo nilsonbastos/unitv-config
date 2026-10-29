@@ -21,6 +21,12 @@ function extractConfigKeys(content) {
 }
 
 
+function isAllowedConfigRecord(record) {
+  if (!record || typeof record.content !== "string" || !record.content) return false;
+  const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
+  return ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending));
+}
+
 function readConfigRecords() {
   try {
     const value = JSON.parse(localStorage.getItem(CONFIG_RECORDS_KEY) || "[]");
@@ -239,7 +245,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 4134, 4536, 4855, 6930 ou 7453. Não comprova ativação.</p>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -439,7 +445,7 @@ function randomUniqueUser(history) {
           savedByMac.get(mac).push({ record, ending });
         }
         const available = eligible.filter(item => !history.macs.has(item.mac));
-        const savedMatches = eligible.flatMap(item => savedByMac.get(item.mac) || []);
+        const savedMatches = Array.from(savedByMac.values()).flat();
         const legacyOnly = eligible.filter(item => history.macs.has(item.mac) && !savedByMac.has(item.mac));
         const summary = document.createElement("p");
         summary.className = "field-hint";
@@ -566,7 +572,7 @@ function randomUniqueUser(history) {
             <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
             <button class="button button-outline" data-action="clear-history" type="button" style="border-color:#b91c1c;color:#b91c1c">Limpar Histórico</button>
           </div>
-          <p class="field-hint">Baixa um ZIP com cada .config filtrado em arquivo separado. Somente arquivos realmente salvos neste navegador; não altera o histórico.</p>
+          <p class="field-hint">Exibe e exporta somente .config cujo key_sn_token_unitvfree termina em: ${ALLOWED_TOKEN_ENDINGS.join(", ")}. O histórico completo continua armazenado; não altera registros.</p>
           <p data-history-count></p>
           <div data-history-results></div>
         </section>`;
@@ -589,11 +595,7 @@ function randomUniqueUser(history) {
         }
         if (event.target.closest('[data-action="export-history"]')) {
           try {
-            const records = readConfigRecords().filter(record => {
-              if (typeof record.content !== "string" || !record.content) return false;
-              const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
-              return ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending));
-            });
+            const records = readConfigRecords().filter(isAllowedConfigRecord);
             if (!records.length) {
               this.toast("Nenhuma configuração filtrada salva neste navegador.", "error");
               return;
@@ -634,21 +636,25 @@ function randomUniqueUser(history) {
         return;
       }
       const search = q(this, "#history-search").value.trim().toLowerCase();
-      const matches = records.filter(r => [r.mac, r.userId, r.deviceId,
-        ...Object.values(r.keys || {})].some(v => String(v || "").toLowerCase().includes(search)));
-      q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
-      q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
+      const filtered = records.filter(isAllowedConfigRecord);
+      const matches = filtered.filter(r => [r.mac, r.userId, r.deviceId,
+        ...Object.values(extractConfigKeys(r.content))].some(v => String(v || "").toLowerCase().includes(search)));
+      q(this, "[data-history-count]").textContent = `${matches.length} de ${filtered.length} configurações filtradas (${records.length} no histórico total)`;
+      q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => {
+        const keys = extractConfigKeys(r.content);
+        return `
         <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
           <p><strong>${escapeHtml(new Date(r.createdAt).toLocaleString("pt-BR"))}</strong></p>
           <p><strong>MAC:</strong> ${escapeHtml(r.mac)} | <strong>User ID:</strong> ${escapeHtml(r.userId)}</p>
           <p><strong>Device ID:</strong> ${escapeHtml(r.deviceId)}</p>
           <details><summary>Mostrar keys</summary>
-            <p><strong>key_n_bt</strong><br><code>${escapeHtml(r.keys?.key_n_bt || "Não encontrada")}</code></p>
-            <p><strong>key_device_id_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_device_id_unitvfree || "Não encontrada")}</code></p>
-            <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_sn_token_unitvfree || "Não encontrada")}</code></p>
+            <p><strong>key_n_bt</strong><br><code>${escapeHtml(keys.key_n_bt || "Não encontrada")}</code></p>
+            <p><strong>key_device_id_unitvfree</strong><br><code>${escapeHtml(keys.key_device_id_unitvfree || "Não encontrada")}</code></p>
+            <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(keys.key_sn_token_unitvfree || "Não encontrada")}</code></p>
           </details>
           <button class="button button-outline" style="margin-top:12px" data-history-download="${escapeHtml(r.id)}">Baixar .config novamente</button>
-        </article>`).join("") : "<p>Nenhuma configuração encontrada.</p>";
+        </article>`;
+      }).join("") : "<p>Nenhuma configuração encontrada com os finais escolhidos.</p>";
     }
   }
 
