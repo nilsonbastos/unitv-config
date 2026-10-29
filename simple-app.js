@@ -563,9 +563,9 @@ function randomUniqueUser(history) {
             <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
           </div>
           <div class="button-row" style="margin:12px 0">
-            <button class="button button-primary" data-action="export-history" type="button">Exportar Somente Filtradas</button>
+            <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
           </div>
-          <p class="field-hint">Exporta somente os arquivos .config salvos cujas keys terminam em um dos 8 finais selecionados, independentemente do prefixo MAC. Não altera o histórico.</p>
+          <p class="field-hint">Baixa um ZIP com cada .config filtrado em arquivo separado. Somente arquivos realmente salvos neste navegador; não altera o histórico.</p>
           <p data-history-count></p>
           <div data-history-results></div>
         </section>`;
@@ -582,17 +582,19 @@ function randomUniqueUser(history) {
               this.toast("Nenhuma configuração filtrada salva neste navegador.", "error");
               return;
             }
-            const backup = {
-              format: "unitv-config-filtered-export",
-              version: 1,
-              exportedAt: new Date().toISOString(),
-              endings: ALLOWED_TOKEN_ENDINGS,
-              count: records.length,
-              records
-            };
-            const filename = `HISTORICO_FILTRADAS_${new Date().toISOString().slice(0, 10)}.json`;
-            downloadBlob(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" }), filename);
-            this.toast(`${records.length} configurações filtradas exportadas.`);
+            // Cada registro salvo vira um arquivo .config individual no ZIP.
+            // Nomes sequenciais evitam colisões e não expõem keys no nome.
+            const entries = records.map((record, index) => {
+              const ending = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "")
+                .trim().toUpperCase().slice(-4);
+              return {
+                name: `CONFIG_${String(index + 1).padStart(4, "0")}_FINAL_${ending}.config`,
+                content: record.content
+              };
+            });
+            const filename = `CONFIGS_FILTRADAS_${new Date().toISOString().slice(0, 10)}.zip`;
+            downloadBlob(ConfigCore.createZip(entries), filename);
+            this.toast(`${records.length} arquivos .config individuais exportados em ZIP.`);
           } catch (error) {
             this.toast(`Falha ao exportar histórico: ${error.message}`, "error");
           }
