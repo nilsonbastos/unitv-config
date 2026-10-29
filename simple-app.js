@@ -8,7 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["4134", "4536", "4855", "6930", "7453", ];
+const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
 
 
 function extractConfigKeys(content) {
@@ -239,7 +239,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 4134, 4536, 4855, 6930 ou 7453. Não comprova ativação.</p>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -641,9 +641,9 @@ function randomUniqueUser(history) {
       this.innerHTML = `
         <section class="section-head"><div><p class="eyebrow">PACOTES LOCAIS</p><h2>Aplicativos</h2><p>APKs disponíveis na pasta de recursos ao lado desta versão.</p></div></section>
         <div class="apk-grid">
-          <article class="apk-item"><div><span class="apk-type">Versão recomendada</span><h3>UniTV Free 5.9.0</h3></div><p>Versão mais recente listada no repositório local.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/V5.9.0/UniTV.Free.5.9.0.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>uniTV.Free.5.7.2</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/V5.7.2/uniTV.Free.5.7.2.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Versão legada</span><h3>UniTV Free 5.4.1.apk</h3></div><p>Pacote antigo disponível no diretório de aplicativos.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/v5.4.1/UniTV.Free.5.4.1.apk">Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Versão recomendada</span><h3>UniTV Free 5.9.0</h3></div><p>Versão mais recente listada no repositório local.</p><a class="button button-primary" href="apps/UniTV%20Free%205.9.0.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.8.0</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.8.0.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Aplicativo Ativa</span><h3>Ativa.apk</h3></div><p>Baixe o aplicativo Ativa pelo GitHub Releases.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/v1.0/ativa.apk">Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="apps/ativadorUniTVFree.apk" download>Baixar APK</a></article>
         </div>
         <section class="manual-guide" aria-labelledby="manual-guide-title">
