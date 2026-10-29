@@ -8,7 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["4134", "4536", "4855", "6930", "7161", "7453"];
+const ALLOWED_TOKEN_ENDINGS = ["2b78", "6e38", 4134", "4536", "4855", "5732", 6930", "7161", "7453"];
 
 
 function extractConfigKeys(content) {
