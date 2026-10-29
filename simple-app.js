@@ -8,7 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["2b78", "6e38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
+const ALLOWED_TOKEN_ENDINGS = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
 
 
 function extractConfigKeys(content) {
@@ -245,7 +245,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 2b78, 6e38, 4134, 4536, 4855, 5732, 6930, 7161 ou 7453. Não comprova ativação.</p>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
