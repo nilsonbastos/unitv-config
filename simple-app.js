@@ -4,7 +4,7 @@
 
   const qa = (root, selector) =>
     Array.from(root.querySelectorAll(selector));
-  UNITVFREE
+  
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
@@ -621,7 +621,9 @@ function randomUniqueUser(history) {
           <article class="apk-item"><div><span class="apk-type">Versão recomendada</span><h3>UniTV Free 5.9.0</h3></div><p>Versão mais recente listada no repositório local.</p><a class="button button-primary" href="apps/UniTV%20Free%205.9.0.apk" download>Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.8.0</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.8.0.apk" download>Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Versão legada</span><h3>UniTV Free 5.1.0</h3></div><p>Pacote antigo disponível no diretório de aplicativos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.1.0.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="apps/apps/UniTV%20Free%205.9.0.apk">
+          <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="apps/ativadorUniTVFree.apk" download>Baixar APK</a></article>
+        </div>
+        <section class="manual-guide" aria-labelledby="manual-guide-title">
           <div class="section-head"><div><p class="eyebrow">TROCA MANUAL</p><h2 id="manual-guide-title">Substituir o .config no Android</h2><p>Use estas etapas quando preferir copiar o arquivo pelo gerenciador de arquivos do dispositivo.</p></div></div>
           <div class="manual-guide-grid">
             <article class="manual-card"><span class="manual-step">01</span><h3>Abra o armazenamento</h3><p>Feche o UniTV Free. No gerenciador de arquivos, abra o armazenamento interno e acesse <code>Android</code>. O destino costuma ser <code>/storage/emulated/0/Android/</code>.</p></article>
