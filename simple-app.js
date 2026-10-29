@@ -86,28 +86,35 @@ function saveHistory(history) {
   }));
 }
 
-function randomUniqueMac(history) {
-  // Primeiro aproveita os MACs ainda livres do prefixo original.
-  const originalPrefix = "9C:00:D3:EC:AA:";
-  const available = [];
+function randomUniqueMac(history, usedTokens) {
+  // O token depende somente do último byte do MAC neste ConfigCore.
+  // Escolhe apenas bytes que ainda não geraram tokens registrados.
+  const eligible = [];
   for (let i = 0; i < 256; i++) {
-    const mac = originalPrefix + i.toString(16).padStart(2, "0").toUpperCase();
-    if (!history.macs.has(mac)) available.push(mac);
+    const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
+    const candidate = "9C:00:D3:EC:AA:" + lastByte;
+    const token = ConfigCore.encodeSnToken(candidate).hex.toUpperCase();
+    if (!usedTokens.has(token)) eligible.push({lastByte, token});
   }
-  if (available.length) {
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
-    return available[random[0] % available.length];
+  if (!eligible.length) {
+    throw new Error("Não há tokens inéditos disponíveis neste algoritmo (máximo de 256). Nenhum registro foi apagado.");
   }
-  // MACs localmente administrados: evita inventar prefixos de fabricantes.
-  // O primeiro octeto 02 indica unicast/local.
+  // Prioriza os finais permitidos que o algoritmo consegue produzir.
+  const allowed = eligible.filter(item => ALLOWED_TOKEN_ENDINGS.some(end => item.token.endsWith(end)));
+  const pool = allowed.length ? allowed : eligible;
+  const random = new Uint32Array(1);
+  crypto.getRandomValues(random);
+  const chosen = pool[random[0] % pool.length];
+  const originalMac = "9C:00:D3:EC:AA:" + chosen.lastByte;
+  if (!history.macs.has(originalMac)) return originalMac;
+  // O prefixo novo só evita MAC repetido; não cria novos tokens.
   for (let attempt = 0; attempt < 10000; attempt++) {
-    const bytes = new Uint8Array(5);
+    const bytes = new Uint8Array(4);
     crypto.getRandomValues(bytes);
-    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":");
+    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":") + ":" + chosen.lastByte;
     if (!history.macs.has(mac)) return mac;
   }
-  throw new Error("Não foi possível encontrar um MAC inédito.");
+  throw new Error("Não foi possível encontrar MAC inédito para o token selecionado.");
 }
 
 function randomUniqueUser(history) {
@@ -245,7 +252,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
+              <p class="field-hint">Prioriza os finais configurados que o algoritmo atual consegue gerar. Impede tokens repetidos no histórico. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -343,9 +350,19 @@ function randomUniqueUser(history) {
             if (record.userId) history.users.add(String(record.userId));
             if (record.deviceId) history.devices.add(String(record.deviceId));
           }
+          const usedTokens = new Set();
+          for (const record of readConfigRecords()) {
+            const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
+            if (token) usedTokens.add(token);
+          }
+          // Inclui os MACs antigos mesmo quando o .config não está mais armazenado.
+          for (const oldMac of history.macs) {
+            try { usedTokens.add(ConfigCore.encodeSnToken(oldMac).hex.toUpperCase()); }
+            catch (_) { /* Ignora MAC legado inválido. */ }
+          }
           const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
             .map(selector => q(this, selector).value);
-          const mac = randomUniqueMac(history);
+          const mac = randomUniqueMac(history, usedTokens);
           const userId = randomUniqueUser(history);
           let config = null;
           try {
@@ -360,6 +377,9 @@ function randomUniqueUser(history) {
               config = null;
             }
             if (!config) throw new Error("Não foi possível gerar Device ID inédito.");
+            if (usedTokens.has(config.sn_token_hex.toUpperCase())) {
+              throw new Error("Token repetido detectado. A configuração não foi salva.");
+            }
             history.macs.add(mac);
             history.users.add(userId);
             history.devices.add(config.device_id_hex);
