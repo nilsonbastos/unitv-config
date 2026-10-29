@@ -7,6 +7,46 @@
   
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
+const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
+
+function readConfigRecords() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CONFIG_RECORDS_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch (error) {
+    throw new Error("Não foi possível ler o histórico de configurações.");
+  }
+}
+
+function storeConfigRecord(config) {
+  const records = readConfigRecords();
+  const content = config.files?.[".config"];
+  if (!content) throw new Error("Configuração sem arquivo .config.");
+  const keys = {};
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
+    if (match) keys[match[1]] = match[2].trim();
+  }
+  records.push({
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    mac: config.mac || q(document, "#single-mac")?.value || "",
+    userId: config.user_id || q(document, "#single-user")?.value || "",
+    deviceId: config.device_id_hex || "",
+    filename: randomConfigFilename(),
+    content,
+    keys
+  });
+  localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[char]);
+}
+
+
 function loadHistory() {
   try {
     const saved = JSON.parse(
@@ -307,7 +347,17 @@ function randomUniqueUser(history) {
             history.macs.add(mac);
             history.users.add(userId);
             history.devices.add(config.device_id_hex);
-            saveHistory(history);
+            // Grava primeiro o arquivo e as keys; se o armazenamento estiver cheio,
+            // a geração não é marcada como concluída.
+            storeConfigRecord(config);
+            try {
+              saveHistory(history);
+            } catch (error) {
+              const records = readConfigRecords();
+              records.pop();
+              localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
+              throw error;
+            }
           } catch (error) {
             ["#single-mac", "#single-user", "#single-folder", "#single-device"]
               .forEach((selector, index) => { q(this, selector).value = oldValues[index]; });
@@ -391,6 +441,57 @@ function randomUniqueUser(history) {
     }
   }
 
+  class HistoryView extends ViewElement {
+    connectedCallback() {
+      this.innerHTML = `
+        <section class="panel panel-pad" style="padding:20px">
+          <h2>Histórico de Keys</h2>
+          <p class="field-hint">Registros deste navegador, a partir desta atualização. Tokens são dados sensíveis: não compartilhe capturas com as keys visíveis.</p>
+          <div class="field" style="margin:16px 0">
+            <label for="history-search">Pesquisar MAC, User ID ou token</label>
+            <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
+          </div>
+          <p data-history-count></p>
+          <div data-history-results></div>
+        </section>`;
+      this.querySelector("#history-search").addEventListener("input", () => this.render());
+      this.addEventListener("click", event => {
+        const button = event.target.closest("[data-history-download]");
+        if (!button) return;
+        const record = readConfigRecords().find(r => r.id === button.dataset.historyDownload);
+        if (!record) return this.toast("Registro não encontrado.", "error");
+        downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), record.filename);
+        this.toast("Download do arquivo .config iniciado.");
+      });
+      this.render();
+    }
+
+    render() {
+      let records;
+      try { records = readConfigRecords(); }
+      catch (error) {
+        q(this, "[data-history-count]").textContent = error.message;
+        return;
+      }
+      const search = q(this, "#history-search").value.trim().toLowerCase();
+      const matches = records.filter(r => [r.mac, r.userId, r.deviceId,
+        ...Object.values(r.keys || {})].some(v => String(v || "").toLowerCase().includes(search)));
+      q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
+      q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
+        <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
+          <p><strong>${escapeHtml(new Date(r.createdAt).toLocaleString("pt-BR"))}</strong></p>
+          <p><strong>MAC:</strong> ${escapeHtml(r.mac)} | <strong>User ID:</strong> ${escapeHtml(r.userId)}</p>
+          <p><strong>Device ID:</strong> ${escapeHtml(r.deviceId)}</p>
+          <details><summary>Mostrar keys</summary>
+            <p><strong>key_n_bt</strong><br><code>${escapeHtml(r.keys?.key_n_bt || "Não encontrada")}</code></p>
+            <p><strong>key_device_id_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_device_id_unitvfree || "Não encontrada")}</code></p>
+            <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_sn_token_unitvfree || "Não encontrada")}</code></p>
+          </details>
+          <button class="button button-outline" style="margin-top:12px" data-history-download="${escapeHtml(r.id)}">Baixar .config novamente</button>
+        </article>`).join("") : "<p>Nenhuma configuração encontrada.</p>";
+    }
+  }
+
   class AppsView extends ViewElement {
     connectedCallback() {
       this.innerHTML = `
@@ -425,9 +526,11 @@ function randomUniqueUser(history) {
           <nav class="view-tabs" aria-label="Seções">
             <button class="view-tab" data-view="generator" aria-selected="true">Gerador 2027</button>
             <button class="view-tab" data-view="apps" aria-selected="false">Aplicativos</button>
+              <button class="view-tab" data-view="history" aria-selected="false">Histórico de Keys</button>
           </nav>
           <section class="view-panel" data-panel="generator"><single-generator-view></single-generator-view></section>
           <section class="view-panel" data-panel="apps" hidden><apps-view></apps-view></section>
+          <section class="view-panel" data-panel="history" hidden><history-view></history-view></section>
           <footer class="footer-note">
             <span>HTML5 · CSS3 · JS Vanilla· Web Components</span>
             <nav class="footer-actions" aria-label="Links do projeto">
@@ -453,11 +556,13 @@ function randomUniqueUser(history) {
       if (!button) return;
       qa(this, "[data-view]").forEach(tab => tab.setAttribute("aria-selected", String(tab === button)));
       qa(this, "[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== button.dataset.view; });
-      const apps = button.dataset.view === "apps";
-      q(this, "[data-page-title]").textContent = apps ? "Aplicativos" : "Gerador individual";
-      q(this, "[data-page-note]").textContent = apps
+      const view = button.dataset.view;
+      q(this, "[data-page-title]").textContent = view === "apps" ? "Aplicativos" : view === "history" ? "Histórico de Keys" : "Gerador individual";
+      q(this, "[data-page-note]").textContent = view === "apps"
         ? "Baixe os pacotes disponíveis na pasta local de aplicativos."
+        : view === "history" ? "Pesquise as configurações salvas neste navegador."
         : "Gere, revise e salve arquivos diretamente no navegador. Os valores ficam no dispositivo.";
+      if (view === "history") q(this, "history-view")?.render();
     }
 
     showToast(detail) {
@@ -472,5 +577,6 @@ function randomUniqueUser(history) {
 
   customElements.define("single-generator-view", SingleGeneratorView);
   customElements.define("apps-view", AppsView);
+  customElements.define("history-view", HistoryView);
   customElements.define("studio-app", StudioApp);
 })();
