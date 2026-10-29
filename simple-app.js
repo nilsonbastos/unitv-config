@@ -81,43 +81,27 @@ function saveHistory(history) {
 }
 
 function randomUniqueMac(history) {
-  const prefix = "9C:00:D3:EC:AA:";
-
-  if (history.macs.size >= 256) {
-    const usedPrefix = [...history.macs]
-      .filter(mac => mac.startsWith(prefix));
-
-    if (usedPrefix.length >= 256) {
-      throw new Error(
-        "Todos os 256 MACs deste prefixo já foram usados."
-      );
-    }
-  }
-
+  // Primeiro aproveita os MACs ainda livres do prefixo original.
+  const originalPrefix = "9C:00:D3:EC:AA:";
   const available = [];
-
   for (let i = 0; i < 256; i++) {
-    const mac = prefix +
-      i.toString(16).padStart(2, "0").toUpperCase();
-
-    if (!history.macs.has(mac)) {
-      available.push(mac);
-    }
+    const mac = originalPrefix + i.toString(16).padStart(2, "0").toUpperCase();
+    if (!history.macs.has(mac)) available.push(mac);
   }
-
-  if (!available.length) {
-    throw new Error("Não há MACs disponíveis.");
+  if (available.length) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    return available[random[0] % available.length];
   }
-
-  const bytes = new Uint32Array(1);
-  const limit = Math.floor(4294967296 / available.length)
-    * available.length;
-
-  do {
+  // MACs localmente administrados: evita inventar prefixos de fabricantes.
+  // O primeiro octeto 02 indica unicast/local.
+  for (let attempt = 0; attempt < 10000; attempt++) {
+    const bytes = new Uint8Array(5);
     crypto.getRandomValues(bytes);
-  } while (bytes[0] >= limit);
-
-  return available[bytes[0] % available.length];
+    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":");
+    if (!history.macs.has(mac)) return mac;
+  }
+  throw new Error("Não foi possível encontrar um MAC inédito.");
 }
 
 function randomUniqueUser(history) {
@@ -347,6 +331,12 @@ function randomUniqueUser(history) {
       if (action === "generate-config") {
         try {
           const history = loadHistory();
+          // Inclui os registros salvos mesmo se o índice de IDs estiver incompleto.
+          for (const record of readConfigRecords()) {
+            if (record.mac) history.macs.add(String(record.mac).trim().toUpperCase());
+            if (record.userId) history.users.add(String(record.userId));
+            if (record.deviceId) history.devices.add(String(record.deviceId));
+          }
           const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
             .map(selector => q(this, selector).value);
           const mac = randomUniqueMac(history);
