@@ -245,7 +245,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: "2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453. Não comprova ativação.</p>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -569,6 +569,8 @@ function randomUniqueUser(history) {
             <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
           </div>
           <div class="button-row" style="margin:12px 0">
+            <button class="button button-outline" data-action="import-config" type="button">Importar .config</button>
+            <input data-import-files type="file" accept=".config,text/plain" multiple hidden>
             <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
             <button class="button button-outline" data-action="clear-history" type="button" style="border-color:#b91c1c;color:#b91c1c">Limpar Histórico</button>
           </div>
@@ -577,7 +579,60 @@ function randomUniqueUser(history) {
           <div data-history-results></div>
         </section>`;
       this.querySelector("#history-search").addEventListener("input", () => this.render());
+      this.querySelector('[data-import-files]').addEventListener('change', async event => {
+        const files = [...event.target.files];
+        event.target.value = '';
+        if (!files.length) return;
+        try {
+          const current = readConfigRecords();
+          const history = loadHistory();
+          const knownTokens = new Set(current.map(r => String(extractConfigKeys(r.content).key_sn_token_unitvfree || '').toUpperCase()));
+          const knownContents = new Set(current.map(r => r.content));
+          const additions = [];
+          let skipped = 0, invalid = 0, outsideFilter = 0;
+          for (const file of files) {
+            if (!/\.config$/i.test(file.name) || file.size > 1024 * 1024) { invalid++; continue; }
+            const content = await file.text();
+            const keys = extractConfigKeys(content);
+            if (!keys.key_n_bt || !keys.key_device_id_unitvfree || !keys.key_sn_token_unitvfree ||
+                ![keys.key_n_bt, keys.key_device_id_unitvfree, keys.key_sn_token_unitvfree].every(v => /^[0-9a-f]+$/i.test(v) && v.length % 2 === 0)) {
+              invalid++; continue;
+            }
+            const token = keys.key_sn_token_unitvfree.toUpperCase();
+            if (knownTokens.has(token) || knownContents.has(content)) { skipped++; continue; }
+            const record = {
+              id: crypto.randomUUID(), createdAt: new Date().toISOString(),
+              mac: '', userId: '', deviceId: keys.key_device_id_unitvfree,
+              filename: file.name.replace(/[^a-z0-9_.-]/gi, '_'), content, keys
+            };
+            additions.push(record);
+            knownTokens.add(token);
+            knownContents.add(content);
+            history.devices.add(record.deviceId);
+            if (!isAllowedConfigRecord(record)) outsideFilter++;
+          }
+          if (additions.length) {
+            const oldRecords = localStorage.getItem(CONFIG_RECORDS_KEY);
+            try {
+              localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify([...current, ...additions]));
+              saveHistory(history);
+            } catch (error) {
+              if (oldRecords === null) localStorage.removeItem(CONFIG_RECORDS_KEY);
+              else localStorage.setItem(CONFIG_RECORDS_KEY, oldRecords);
+              throw error;
+            }
+          }
+          this.render();
+          this.toast(`${additions.length} importadas · ${skipped} duplicadas · ${invalid} inválidas${outsideFilter ? ` · ${outsideFilter} fora dos 9 finais (salvas, mas ocultas)` : ''}.`);
+        } catch (error) {
+          this.toast(`Falha ao importar: ${error.message}`, 'error');
+        }
+      });
       this.addEventListener("click", event => {
+        if (event.target.closest('[data-action="import-config"]')) {
+          this.querySelector('[data-import-files]').click();
+          return;
+        }
         if (event.target.closest('[data-action="clear-history"]')) {
           const count = readConfigRecords().length;
           if (!window.confirm(`ATENÇÃO: Apagar ${count} configurações salvas e todos os MACs, User IDs e Device IDs usados neste navegador? Esta ação não pode ser desfeita. Faça backup antes de continuar.`)) return;
