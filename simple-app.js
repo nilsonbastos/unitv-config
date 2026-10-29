@@ -564,6 +564,7 @@ function randomUniqueUser(history) {
           </div>
           <div class="button-row" style="margin:12px 0">
             <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
+            <button class="button button-outline" data-action="clear-history" type="button" style="border-color:#b91c1c;color:#b91c1c">Limpar Histórico</button>
           </div>
           <p class="field-hint">Baixa um ZIP com cada .config filtrado em arquivo separado. Somente arquivos realmente salvos neste navegador; não altera o histórico.</p>
           <p data-history-count></p>
@@ -571,6 +572,21 @@ function randomUniqueUser(history) {
         </section>`;
       this.querySelector("#history-search").addEventListener("input", () => this.render());
       this.addEventListener("click", event => {
+        if (event.target.closest('[data-action="clear-history"]')) {
+          const count = readConfigRecords().length;
+          if (!window.confirm(`ATENÇÃO: Apagar ${count} configurações salvas e todos os MACs, User IDs e Device IDs usados neste navegador? Esta ação não pode ser desfeita. Faça backup antes de continuar.`)) return;
+          if (!window.confirm("Confirma a exclusão DEFINITIVA do Histórico de Keys?")) return;
+          try {
+            localStorage.removeItem(CONFIG_RECORDS_KEY);
+            localStorage.removeItem(HISTORY_KEY);
+            this.querySelector("#history-search").value = "";
+            this.render();
+            this.toast("Histórico de Keys apagado deste navegador.");
+          } catch (error) {
+            this.toast(`Falha ao limpar histórico: ${error.message}`, "error");
+          }
+          return;
+        }
         if (event.target.closest('[data-action="export-history"]')) {
           try {
             const records = readConfigRecords().filter(record => {
