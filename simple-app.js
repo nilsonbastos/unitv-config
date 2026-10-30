@@ -95,13 +95,13 @@ function randomUniqueMac(history, usedTokens) {
     const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
     const mac = prefix + lastByte;
     const token = ConfigCore.encodeSnToken(mac).hex.toUpperCase();
-    // Não gerar tokens repetidos ou com qualquer um dos 9 finais antigos.
+    // Gerar somente tokens inéditos com um dos 9 finais selecionados.
     if (history.macs.has(mac) || usedTokens.has(token) ||
-        ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending))) continue;
+        !ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending))) continue;
     eligible.push(mac);
   }
   if (!eligible.length) {
-    throw new Error("Não há MACs disponíveis no prefixo 94:00:D3:88:DC para gerar tokens inéditos fora dos 9 finais excluídos. Histórico preservado.");
+    throw new Error("Não há MACs disponíveis no prefixo 94:00:D3:88:DC para gerar tokens inéditos com os 9 finais selecionados. Histórico preservado.");
   }
   const random = new Uint32Array(1);
   crypto.getRandomValues(random);
@@ -243,7 +243,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Gera identificadores próprios com base em D3:88:DC:XX, sem repetir tokens salvos e evitando os 9 finais antigos. Não são keys de ativação do UniTV Free.</p>
+              <p class="field-hint">Gera identificadores próprios com base em D3:88:DC:XX, sem repetir tokens salvos e utilizando somente os 9 finais escolhidos. Não são keys de ativação do UniTV Free.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -432,7 +432,7 @@ function randomUniqueUser(history) {
       try {
         const history = loadHistory();
         const saved = readConfigRecords();
-        const prefix = "9C:00:D3:EC:AA:";
+        const prefix = "94:00:D3:88:DC:";
         const eligible = [];
         const usedEligible = new Set();
         const endingCounts = Object.fromEntries(ALLOWED_TOKEN_ENDINGS.map(end => [end, 0]));
