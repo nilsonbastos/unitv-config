@@ -8,18 +8,6 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
-const FILTER_ATTEMPT_LIMIT = 5000;
-
-function extractConfigKeys(content) {
-  const keys = {};
-  for (const line of String(content || "").split(/\r?\n/)) {
-    const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
-    if (match) keys[match[1]] = match[2].trim();
-  }
-  return keys;
-}
-
 
 function readConfigRecords() {
   try {
@@ -34,7 +22,11 @@ function storeConfigRecord(config) {
   const records = readConfigRecords();
   const content = config.files?.[".config"];
   if (!content) throw new Error("Configuração sem arquivo .config.");
-  const keys = extractConfigKeys(content);
+  const keys = {};
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
+    if (match) keys[match[1]] = match[2].trim();
+  }
   records.push({
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
@@ -233,9 +225,6 @@ function randomUniqueUser(history) {
     connectedCallback() {
       this.files = {};
       this.currentFile = ".config";
-      this.filteredResults = [];
-      this.filterRunning = false;
-      this.filterStopRequested = false;
       this.innerHTML = `
         <div class="generator-layout">
           <section class="panel panel-pad">
@@ -253,15 +242,6 @@ function randomUniqueUser(history) {
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-config">Gerar config</button>
               </div>
-              <div class="form-divider"></div>
-              <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
-              <div class="button-row">
-                <button class="button button-primary" data-action="generate-filtered">Procurar configs filtradas</button>
-                <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
-              </div>
-              <p class="field-hint" data-filter-status aria-live="polite">Limite: 5.000 tentativas por busca. Os arquivos encontrados são baixados individualmente.</p>
-              <div data-filter-results></div>
               <p class="field-hint">A configuração é montada neste navegador. Nenhum campo é enviado a um servidor.</p>
               <div class="form-divider"></div>
               <div class="button-row">
@@ -393,85 +373,11 @@ function randomUniqueUser(history) {
         }
         return;
       }
-      if (action === "generate-filtered") { this.generateFiltered(); return; }
-      if (action === "stop-filtered") { this.filterStopRequested = true; return; }
-      if (action === "download-filtered") {
-        const index = Number(event.target.closest("[data-filter-index]")?.dataset.filterIndex);
-        const record = this.filteredResults[index];
-        if (!record) return this.toast("Arquivo não encontrado.", "error");
-        downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), record.filename);
-        this.toast("Download individual iniciado.");
-        return;
-      }
       if (action === "copy") this.copyCurrent();
       if (action === "download-current") this.downloadCurrent();
       if (action === "download-config") this.downloadConfig();
       if (action === "download-zip") this.downloadZip();
       if (action === "save-folder") this.saveFolder();
-    }
-
-    async generateFiltered() {
-      if (this.filterRunning) return;
-      this.filterRunning = true;
-      this.filterStopRequested = false;
-      this.filteredResults = [];
-      const status = q(this, "[data-filter-status]");
-      const results = q(this, "[data-filter-results]");
-      const start = q(this, '[data-action="generate-filtered"]');
-      const stop = q(this, '[data-action="stop-filtered"]');
-      start.disabled = true;
-      stop.disabled = false;
-      results.replaceChildren();
-      let attempts = 0;
-      try {
-        const history = loadHistory();
-        const channelCode = q(this, "#single-channel").value;
-        // Cada tentativa gera uma configuração real; não modifica nem força os tokens.
-        while (attempts < FILTER_ATTEMPT_LIMIT && !this.filterStopRequested) {
-          for (let batch = 0; batch < 50 && attempts < FILTER_ATTEMPT_LIMIT && !this.filterStopRequested; batch++) {
-            attempts++;
-            const mac = randomUniqueMac(history);
-            const userId = randomUniqueUser(history);
-            const folder = `CONFIG_FILTRO_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
-            const config = ConfigCore.generateConfig({ mac, userId, folder, channelCode });
-            const content = config.files?.[".config"] || "";
-            const keys = extractConfigKeys(content);
-            const token = String(keys.key_sn_token_unitvfree || "").toUpperCase();
-            const ending = ALLOWED_TOKEN_ENDINGS.find(end => token.endsWith(end));
-            if (!ending || history.devices.has(config.device_id_hex)) continue;
-            const filename = randomConfigFilename();
-            // Salva apenas as configurações encontradas, não as tentativas descartadas.
-            storeConfigRecord(config);
-            history.macs.add(mac);
-            history.users.add(userId);
-            history.devices.add(config.device_id_hex);
-            saveHistory(history);
-            const index = this.filteredResults.push({ content, filename, ending }) - 1;
-            const article = document.createElement("article");
-            article.className = "panel";
-            article.style.cssText = "padding:12px;margin:10px 0;overflow-wrap:anywhere";
-            const title = document.createElement("p");
-            title.textContent = `Config ${index + 1} — final ${ending} — ${filename}`;
-            const button = document.createElement("button");
-            button.className = "button button-outline";
-            button.textContent = "Baixar .config individual";
-            button.dataset.action = "download-filtered";
-            button.dataset.filterIndex = String(index);
-            article.append(title, button);
-            results.append(article);
-          }
-          status.textContent = `${attempts.toLocaleString("pt-BR")} tentativas; ${this.filteredResults.length} configs encontradas.`;
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-        status.textContent = `${this.filterStopRequested ? "Busca interrompida" : "Busca concluída"}: ${attempts.toLocaleString("pt-BR")} tentativas, ${this.filteredResults.length} configs encontradas. ${this.filteredResults.length ? "Baixe cada uma pelo botão correspondente." : "Nenhum dos 8 finais apareceu. Tente novamente se desejar."}`;
-      } catch (error) {
-        status.textContent = `Busca encerrada após ${attempts} tentativas: ${error.message}`;
-        this.toast(error.message || "Erro na busca filtrada.", "error");
-      } finally {
-        this.filterRunning = false;
-        start.disabled = false;
-        stop.disabled = true;
-      }
     }
 
     currentConfig() {
