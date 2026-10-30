@@ -8,7 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975"];
+const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
 
 
 function extractConfigKeys(content) {
@@ -239,7 +239,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975. Não comprova ativação.</p>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -562,11 +562,44 @@ function randomUniqueUser(history) {
             <label for="history-search">Pesquisar MAC, User ID ou token</label>
             <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
           </div>
+          <div class="button-row" style="margin:12px 0">
+            <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
+          </div>
+          <p class="field-hint">Baixa um ZIP com cada .config filtrado em arquivo separado. Somente arquivos realmente salvos neste navegador; não altera o histórico.</p>
           <p data-history-count></p>
           <div data-history-results></div>
         </section>`;
       this.querySelector("#history-search").addEventListener("input", () => this.render());
       this.addEventListener("click", event => {
+        if (event.target.closest('[data-action="export-history"]')) {
+          try {
+            const records = readConfigRecords().filter(record => {
+              if (typeof record.content !== "string" || !record.content) return false;
+              const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
+              return ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending));
+            });
+            if (!records.length) {
+              this.toast("Nenhuma configuração filtrada salva neste navegador.", "error");
+              return;
+            }
+            // Cada registro salvo vira um arquivo .config individual no ZIP.
+            // Nomes sequenciais evitam colisões e não expõem keys no nome.
+            const entries = records.map((record, index) => {
+              const ending = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "")
+                .trim().toUpperCase().slice(-4);
+              return {
+                name: `CONFIG_${String(index + 1).padStart(4, "0")}_FINAL_${ending}.config`,
+                content: record.content
+              };
+            });
+            const filename = `CONFIGS_FILTRADAS_${new Date().toISOString().slice(0, 10)}.zip`;
+            downloadBlob(ConfigCore.createZip(entries), filename);
+            this.toast(`${records.length} arquivos .config individuais exportados em ZIP.`);
+          } catch (error) {
+            this.toast(`Falha ao exportar histórico: ${error.message}`, "error");
+          }
+          return;
+        }
         const button = event.target.closest("[data-history-download]");
         if (!button) return;
         const record = readConfigRecords().find(r => r.id === button.dataset.historyDownload);
