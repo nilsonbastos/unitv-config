@@ -55,38 +55,14 @@
     return bytes;
   }
 
-  // Algoritmo próprio v1: identificador determinístico de 24 bytes.
-  // NÃO é um token de autenticação do UniTV Free.
-  // Considera D3:88:DC:XX e inclui os quatro bytes no resultado.
   function encodeSnToken(mac) {
     const clean = String(mac).trim().toUpperCase();
-    if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(clean)) {
-      throw new Error("MAC inválido.");
-    }
     const parts = clean.split(":");
-    const tail = parts.slice(2).map(part => parseInt(part, 16));
-    const bytes = new Uint8Array(24);
-    bytes.set(tail, 0);
-    // Mistura determinística FNV-1a + avalanche; não é criptografia.
-    let state = 0x811c9dc5;
-    for (const byte of tail) {
-      state = Math.imul(state ^ byte, 0x01000193) >>> 0;
-    }
-    for (let i = 4; i < bytes.length; i++) {
-      state ^= state >>> 13;
-      state = Math.imul(state, 0x85ebca6b) >>> 0;
-      state ^= state >>> 16;
-      state = Math.imul(state, 0xc2b2ae35) >>> 0;
-      state ^= state >>> 13;
-      bytes[i] = state & 255;
-      state = (state + i + tail[i % 4]) >>> 0;
-    }
-    // Os dois últimos caracteres Base64 representam o final hexadecimal escolhido.
-    // Este é um formato próprio do projeto, não um token UniTV Free.
-    const allowedEndings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
-    const ending = allowedEndings[tail[3] % allowedEndings.length];
-    const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
-    const base64 = bytesToBase64(bytes).slice(0, -2) + endingChars;
+    const lastByte = parts.length === 6 ? parts[5] : clean.length === 12 ? clean.slice(10, 12) : clean.slice(15, 17);
+    const firstNibble = BLOCK_1_MAP[lastByte[0]] ? lastByte[0] : "6";
+    const secondNibble = BLOCK_2_MAP[lastByte[1]] ? lastByte[1] : "F";
+    const bytes = hexToBytes(BLOCK_0_HEX + BLOCK_1_MAP[firstNibble] + BLOCK_2_MAP[secondNibble]);
+    const base64 = bytesToBase64(bytes);
     return { hex: asciiToHex(base64), base64 };
   }
 
