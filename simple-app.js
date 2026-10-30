@@ -5,7 +5,10 @@
   const HISTORY_KEY = "unitv_config_used_ids_v1";
   const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
   const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536"];
-  const MAC_PREFIX = "9C:00:D3:EC:AA:";
+  // Os tres primeiros bytes permanecem fixos; os dois seguintes variam.
+  // O ultimo byte determina o final do token pelo algoritmo do core.js.
+  const MAC_OUI_PREFIX = "9C:00:D3:";
+  let compatibleLastBytesCache = null;
 
   function extractConfigKeys(content) {
     const keys = {};
@@ -69,16 +72,32 @@
     do { crypto.getRandomValues(bytes); } while (bytes[0] >= limit);
     return bytes[0] % length;
   }
-  function randomUniqueMacFiltered(history) {
-    const available = [];
+  function compatibleLastBytes() {
+    if (compatibleLastBytesCache) return compatibleLastBytesCache;
+    const values = [];
     for (let i = 0; i < 256; i++) {
-      const mac = MAC_PREFIX + i.toString(16).padStart(2, "0").toUpperCase();
-      if (history.macs.has(mac)) continue;
-      const token = ConfigCore.encodeSnToken(mac).hex.trim().toUpperCase();
-      if (ALLOWED_TOKEN_ENDINGS.includes(token.slice(-4))) available.push(mac);
+      const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
+      const tokenHex = ConfigCore.encodeSnToken(`${MAC_OUI_PREFIX}EC:AA:${lastByte}`).hex.toUpperCase();
+      if (ALLOWED_TOKEN_ENDINGS.includes(tokenHex.slice(-4))) values.push(lastByte);
     }
-    if (!available.length) throw new Error("Nenhum MAC disponível produz os cinco finais selecionados.");
-    return available[secureIndex(available.length)];
+    if (!values.length) throw new Error("O core.js não produz os cinco finais selecionados.");
+    compatibleLastBytesCache = values;
+    return values;
+  }
+
+  function randomUniqueMacFiltered(history) {
+    const endings = compatibleLastBytes();
+    const byteHex = number => number.toString(16).padStart(2, "0").toUpperCase();
+    // 256 x 256 x 80 = 5.242.880 MACs possíveis com este core.js.
+    // Tentativas aleatórias evitam percorrer milhões de endereços a cada clique.
+    for (let attempt = 0; attempt < 2000; attempt++) {
+      const fourth = byteHex(secureIndex(256));
+      const fifth = byteHex(secureIndex(256));
+      const last = endings[secureIndex(endings.length)];
+      const mac = `${MAC_OUI_PREFIX}${fourth}:${fifth}:${last}`;
+      if (!history.macs.has(mac)) return mac;
+    }
+    throw new Error("Não foi encontrado um novo MAC após várias tentativas. Verifique seu histórico.");
   }
   function randomUniqueUser(history) {
     for (let i = 0; i < 1000; i++) {
@@ -156,7 +175,7 @@
                 <div class="field"><label for="single-channel">Código do canal</label><input id="single-channel" value="SBTHD"></div>
               </div>
               <div class="button-row"><button class="button button-primary" data-action="generate-config">Gerar config</button></div>
-              <p class="field-hint">Somente keys com finais 7453, 4855, 6930, 4134 ou 4536 são registradas. Os dados ficam neste navegador.</p>
+              <p class="field-hint">Somente finais 7453, 4855, 6930, 4134 ou 4536. Cada MAC e Device ID gerado é novo; o token pode se repetir, pois depende apenas do último byte do MAC. Os dados ficam neste navegador.</p>
               <div class="form-divider"></div>
               <div class="button-row">
                 <button class="button button-primary" data-action="save-folder">Salvar arquivos</button>
@@ -228,6 +247,7 @@
             q(this, "#single-folder").value = `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
             q(this, "#single-device").value = "";
             for (let attempt = 0; attempt < 100; attempt++) {
+              q(this, "#single-device").value = "";
               config = this.makeConfig();
               if (!history.devices.has(config.device_id_hex)) break;
               config = null;
