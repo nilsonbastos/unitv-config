@@ -421,7 +421,17 @@ function randomUniqueUser(history) {
       try {
         const config = this.currentConfig();
         if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
-        downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
+        // Nome individual baseado na posição do registro e no final real do token.
+        const records = readConfigRecords();
+        const content = config.files[".config"];
+        const existing = records.slice().reverse().find(record => record.content === content);
+        const token = String(extractConfigKeys(content).key_sn_token_unitvfree || "").trim().toUpperCase();
+        const ending = /^[0-9A-F]{4}$/.test(token.slice(-4)) ? token.slice(-4) : "SEM_FINAL";
+        const number = existing
+          ? String(records.findIndex(record => record.id === existing.id) + 1).padStart(4, "0")
+          : String(records.length + 1).padStart(4, "0");
+        const filename = `CONFIG_${number}_FINAL_${ending}.config`;
+        downloadBlob(new Blob([content], { type: "application/octet-stream" }), filename);
         this.toast("Arquivo .config enviado para download.");
       } catch (error) {
         this.toast(`Falha no download: ${error.message}`, "error");
