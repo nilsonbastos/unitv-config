@@ -84,7 +84,12 @@
     // Os dois últimos caracteres Base64 representam o final hexadecimal escolhido.
     // Este é um formato próprio do projeto, não um token UniTV Free.
     const allowedEndings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
-    const ending = allowedEndings[tail[3] % allowedEndings.length];
+    const chosen = typeof document !== "undefined"
+      ? document.querySelector("#experimental-token-ending")?.value
+      : null;
+    const ending = allowedEndings.includes(chosen)
+      ? chosen
+      : allowedEndings[tail[3] % allowedEndings.length];
     const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
     // Modo experimental: reproduz somente o prefixo de formato observado.
     // O prefixo tem 23 dígitos hexadecimais; acrescentamos um nibble para
@@ -334,6 +339,55 @@
       ["setUint32", [16, localData.length, true]], ["setUint16", [20, 0, true]]
     ]);
     return new Blob([localData, centralData, end], { type: "application/zip" });
+  }
+
+  // Controle de final para identificadores experimentais.
+  // Inserido sem alterar o histórico ou o simple-app.js existente.
+  function installEndingSelector() {
+    const macField = document.querySelector("#single-mac");
+    if (!macField || document.querySelector("#experimental-token-ending")) return;
+    const container = document.createElement("div");
+    container.className = "field";
+    container.style.marginTop = "12px";
+    const label = document.createElement("label");
+    label.htmlFor = "experimental-token-ending";
+    label.textContent = "Final do identificador experimental";
+    const select = document.createElement("select");
+    select.id = "experimental-token-ending";
+    select.style.cssText = "width:100%;padding:11px;border-radius:8px";
+    const endings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Automático pelo MAC";
+    select.append(auto);
+    endings.forEach(value => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    });
+    const note = document.createElement("p");
+    note.className = "field-hint";
+    note.textContent = "Somente para testes de formato; não é uma key de ativação oficial.";
+    select.addEventListener("change", () => {
+      macField.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    container.append(label, select, note);
+    const parent = macField.closest(".field");
+    if (parent) parent.after(container);
+  }
+
+  if (typeof document !== "undefined") {
+    const observer = new MutationObserver(installEndingSelector);
+    const start = () => {
+      installEndingSelector();
+      observer.observe(document.body, { childList: true, subtree: true });
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", start, { once: true });
+    } else {
+      start();
+    }
   }
 
   window.ConfigCore = Object.freeze({
