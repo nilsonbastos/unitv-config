@@ -9,6 +9,22 @@ const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
 
+function extractConfigKeys(content) {
+  const keys = {};
+  for (const line of String(content || "").split(/\r?\n/)) {
+    const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
+    if (match) keys[match[1]] = match[2].trim();
+  }
+  return keys;
+}
+
+function configFilenameFor(content, number) {
+  const token = String(extractConfigKeys(content).key_sn_token_unitvfree || "").trim().toUpperCase();
+  const last = token.slice(-4);
+  const ending = /^[0-9A-F]{4}$/.test(last) ? last : "SEM_FINAL";
+  return `CONFIG_${String(number).padStart(4, "0")}_FINAL_${ending}.config`;
+}
+
 function readConfigRecords() {
   try {
     const value = JSON.parse(localStorage.getItem(CONFIG_RECORDS_KEY) || "[]");
@@ -33,7 +49,7 @@ function storeConfigRecord(config) {
     mac: config.mac || q(document, "#single-mac")?.value || "",
     userId: config.user_id || q(document, "#single-user")?.value || "",
     deviceId: config.device_id_hex || "",
-    filename: randomConfigFilename(),
+    filename: configFilenameFor(content, records.length + 1),
     content,
     keys
   });
@@ -43,10 +59,7 @@ function storeConfigRecord(config) {
 function individualConfigFilename(record) {
   const records = readConfigRecords();
   const position = records.findIndex(item => item.id === record.id);
-  const number = String(position >= 0 ? position + 1 : records.length + 1).padStart(4, "0");
-  const token = String(extractConfigKeys(record.content || "").key_sn_token_unitvfree || "").trim().toUpperCase();
-  const ending = /^[0-9A-F]{4}$/.test(token.slice(-4)) ? token.slice(-4) : "SEM_FINAL";
-  return `CONFIG_${number}_FINAL_${ending}.config`;
+  return configFilenameFor(record.content || "", position >= 0 ? position + 1 : records.length + 1);
 }
 
 function escapeHtml(value) {
@@ -421,16 +434,10 @@ function randomUniqueUser(history) {
       try {
         const config = this.currentConfig();
         if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
-        // Nome individual baseado na posição do registro e no final real do token.
         const records = readConfigRecords();
         const content = config.files[".config"];
-        const existing = records.slice().reverse().find(record => record.content === content);
-        const token = String(extractConfigKeys(content).key_sn_token_unitvfree || "").trim().toUpperCase();
-        const ending = /^[0-9A-F]{4}$/.test(token.slice(-4)) ? token.slice(-4) : "SEM_FINAL";
-        const number = existing
-          ? String(records.findIndex(record => record.id === existing.id) + 1).padStart(4, "0")
-          : String(records.length + 1).padStart(4, "0");
-        const filename = `CONFIG_${number}_FINAL_${ending}.config`;
+        const existingIndex = records.findIndex(record => record.content === content);
+        const filename = configFilenameFor(content, existingIndex >= 0 ? existingIndex + 1 : records.length + 1);
         downloadBlob(new Blob([content], { type: "application/octet-stream" }), filename);
         this.toast("Arquivo .config enviado para download.");
       } catch (error) {
