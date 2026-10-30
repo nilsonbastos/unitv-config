@@ -8,7 +8,7 @@
   // Os tres primeiros bytes permanecem fixos; os dois seguintes variam.
   // O ultimo byte determina o final do token pelo algoritmo do core.js.
   const MAC_OUI_PREFIX = "9C:00:D3:";
-  let compatibleLastBytesCache = null;
+  let endingMapCache = null;
 
   function extractConfigKeys(content) {
     const keys = {};
@@ -21,8 +21,32 @@
   function tokenEnding(content) {
     return String(extractConfigKeys(content).key_sn_token_unitvfree || "").trim().toUpperCase().slice(-4);
   }
-  function isAllowedConfig(config) {
-    return ALLOWED_TOKEN_ENDINGS.includes(tokenEnding(config.files?.[".config"]));
+  function supportedEndingMap() {
+    if (endingMapCache) return endingMapCache;
+    const map = new Map();
+    for (let i = 0; i < 256; i++) {
+      const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
+      const tokenHex = ConfigCore.encodeSnToken(`${MAC_OUI_PREFIX}EC:AA:${lastByte}`).hex.toUpperCase();
+      const ending = tokenHex.slice(-4);
+      if (!map.has(ending)) map.set(ending, []);
+      map.get(ending).push(lastByte);
+    }
+    endingMapCache = map;
+    return map;
+  }
+  function requestedTokenEndings(raw) {
+    const desired = String(raw || "").trim().toUpperCase();
+    if (!desired) return ALLOWED_TOKEN_ENDINGS;
+    if (!/^[0-9A-F]{4}$/.test(desired)) {
+      throw new Error("Digite exatamente 4 caracteres hexadecimais (0-9 ou A-F), ou deixe em branco.");
+    }
+    if (!supportedEndingMap().has(desired)) {
+      throw new Error(`Final ${desired} indisponível neste core.js. Finais possíveis: ${Array.from(supportedEndingMap().keys()).sort().join(", ")}.`);
+    }
+    return [desired];
+  }
+  function matchesEndings(config, endings) {
+    return endings.includes(tokenEnding(config.files?.[".config"]));
   }
   function configFilenameFor(content, number) {
     const last = tokenEnding(content);
@@ -34,8 +58,8 @@
     if (!Array.isArray(data)) throw new Error("Histórico inválido.");
     return data;
   }
-  function storeConfigRecord(config) {
-    if (!isAllowedConfig(config)) throw new Error("Key fora dos cinco finais permitidos. Nada foi salvo.");
+  function storeConfigRecord(config, desiredEndings) {
+    if (!matchesEndings(config, desiredEndings)) throw new Error("A key não corresponde ao final solicitado. Nada foi salvo.");
     const records = readConfigRecords();
     const content = config.files[".config"];
     const record = {
@@ -72,32 +96,20 @@
     do { crypto.getRandomValues(bytes); } while (bytes[0] >= limit);
     return bytes[0] % length;
   }
-  function compatibleLastBytes() {
-    if (compatibleLastBytesCache) return compatibleLastBytesCache;
-    const values = [];
-    for (let i = 0; i < 256; i++) {
-      const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
-      const tokenHex = ConfigCore.encodeSnToken(`${MAC_OUI_PREFIX}EC:AA:${lastByte}`).hex.toUpperCase();
-      if (ALLOWED_TOKEN_ENDINGS.includes(tokenHex.slice(-4))) values.push(lastByte);
-    }
-    if (!values.length) throw new Error("O core.js não produz os cinco finais selecionados.");
-    compatibleLastBytesCache = values;
-    return values;
-  }
-
-  function randomUniqueMacFiltered(history) {
-    const endings = compatibleLastBytes();
+  function randomUniqueMacFiltered(history, desiredEndings) {
+    const map = supportedEndingMap();
+    const matchingBytes = desiredEndings.flatMap(ending => map.get(ending) || []);
+    if (!matchingBytes.length) throw new Error("Nenhum MAC pode produzir o final solicitado.");
     const byteHex = number => number.toString(16).padStart(2, "0").toUpperCase();
-    // 256 x 256 x 80 = 5.242.880 MACs possíveis com este core.js.
-    // Tentativas aleatórias evitam percorrer milhões de endereços a cada clique.
+    // Os dois bytes intermediários variam para aumentar as combinações disponíveis.
     for (let attempt = 0; attempt < 2000; attempt++) {
       const fourth = byteHex(secureIndex(256));
       const fifth = byteHex(secureIndex(256));
-      const last = endings[secureIndex(endings.length)];
+      const last = matchingBytes[secureIndex(matchingBytes.length)];
       const mac = `${MAC_OUI_PREFIX}${fourth}:${fifth}:${last}`;
       if (!history.macs.has(mac)) return mac;
     }
-    throw new Error("Não foi encontrado um novo MAC após várias tentativas. Verifique seu histórico.");
+    throw new Error("Não foi encontrado um MAC novo com esse final após várias tentativas.");
   }
   function randomUniqueUser(history) {
     for (let i = 0; i < 1000; i++) {
@@ -174,8 +186,18 @@
                 <div class="field"><label for="single-folder">Nome da pasta</label><input id="single-folder" value="CONFIG_1"></div>
                 <div class="field"><label for="single-channel">Código do canal</label><input id="single-channel" value="SBTHD"></div>
               </div>
+              <div class="field" style="margin:12px 0">
+                <label for="single-token-ending">Escolher os 4 caracteres finais da key (opcional)</label>
+                <input id="single-token-ending" maxlength="4" placeholder="Ex.: 4134 (vazio = automático)" list="token-ending-suggestions" spellcheck="false" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
+                <datalist id="token-ending-suggestions">
+                  <option value="7453"></option><option value="4855"></option><option value="6930"></option>
+                  <option value="4134"></option><option value="4536"></option><option value="2B78"></option>
+                  <option value="6E38"></option><option value="5732"></option><option value="7161"></option>
+                </datalist>
+                <p class="field-hint">Vazio: sorteia entre 7453, 4855, 6930, 4134 e 4536. Também aceita os outros finais possíveis do core.js: 2B78, 6E38, 5732 e 7161.</p>
+              </div>
               <div class="button-row"><button class="button button-primary" data-action="generate-config">Gerar config</button></div>
-              <p class="field-hint">Somente finais 7453, 4855, 6930, 4134 ou 4536. Cada MAC e Device ID gerado é novo; o token pode se repetir, pois depende apenas do último byte do MAC. Os dados ficam neste navegador.</p>
+              <p class="field-hint">O final escolhido é verificado antes de salvar. Cada novo MAC e Device ID é único no histórico deste navegador, mas o token completo pode se repetir.</p>
               <div class="form-divider"></div>
               <div class="button-row">
                 <button class="button button-primary" data-action="save-folder">Salvar arquivos</button>
@@ -236,8 +258,9 @@
       const action = event.target.closest("[data-action]")?.dataset.action;
       if (action === "generate-config") {
         try {
+          const desiredEndings = requestedTokenEndings(q(this, "#single-token-ending").value);
           const history = loadHistory();
-          const mac = randomUniqueMacFiltered(history);
+          const mac = randomUniqueMacFiltered(history, desiredEndings);
           const userId = randomUniqueUser(history);
           const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"].map(selector => q(this, selector).value);
           let config;
@@ -253,8 +276,8 @@
               config = null;
             }
             if (!config) throw new Error("Não foi possível gerar Device ID inédito.");
-            if (!isAllowedConfig(config)) throw new Error("Final da key não permitido. Configuração não salva.");
-            storeConfigRecord(config);
+            if (!matchesEndings(config, desiredEndings)) throw new Error("Final da key diferente do solicitado. Configuração não salva.");
+            storeConfigRecord(config, desiredEndings);
             try {
               history.macs.add(mac); history.users.add(userId); history.devices.add(config.device_id_hex);
               saveHistory(history);
@@ -269,6 +292,7 @@
             throw error;
           }
           this.acceptedConfig = config;
+          this.acceptedEndings = desiredEndings;
           this.files = config.files;
           q(this, "#single-device").value = ConfigCore.decodeHex(config.device_id_hex).text;
           this.updatePreview();
@@ -285,7 +309,7 @@
       if (action === "save-folder") this.saveFolder();
     }
     currentConfig() {
-      if (!this.acceptedConfig || !isAllowedConfig(this.acceptedConfig)) throw new Error("Clique em Gerar config para criar uma key com final permitido.");
+      if (!this.acceptedConfig || !matchesEndings(this.acceptedConfig, this.acceptedEndings || [])) throw new Error("Clique em Gerar config para criar uma key com o final solicitado.");
       return this.acceptedConfig;
     }
     async copyCurrent() {
@@ -348,21 +372,33 @@
           <div class="field" style="margin:12px 0">
             <label for="history-ending">Filtrar final da key</label>
             <select id="history-ending" style="width:100%;padding:10px">
-              <option value="allowed">Somente os 5 finais permitidos</option>
+              <option value="all">Todas as keys</option>
+              <option value="allowed">Somente os 5 finais padrão</option>
               <option value="7453">Final 7453</option>
               <option value="4855">Final 4855</option>
               <option value="6930">Final 6930</option>
               <option value="4134">Final 4134</option>
               <option value="4536">Final 4536</option>
-              <option value="all">Todas as keys</option>
+              <option value="2B78">Final 2B78</option>
+              <option value="6E38">Final 6E38</option>
+              <option value="5732">Final 5732</option>
+              <option value="7161">Final 7161</option>
             </select>
           </div>
-          <button class="button button-outline" data-history-clear style="margin:10px 0">Excluir histórico das keys</button>
+          <div class="button-row" style="margin:12px 0;display:flex;flex-wrap:wrap;gap:10px">
+            <button class="button button-primary" type="button" data-history-zip>Baixar ZIP das keys filtradas</button>
+            <button class="button button-outline" type="button" data-history-clear>Excluir histórico das keys</button>
+          </div>
+          <p class="field-hint">O ZIP incluirá somente os arquivos .config exibidos pelos filtros de final e pesquisa acima, sem apagar o histórico.</p>
           <p data-history-count></p><div data-history-results></div>
         </section>`;
       q(this, "#history-search").addEventListener("input", () => this.render());
       q(this, "#history-ending").addEventListener("change", () => this.render());
       this.addEventListener("click", event => {
+        if (event.target.closest("[data-history-zip]")) {
+          this.downloadFilteredZip();
+          return;
+        }
         if (event.target.closest("[data-history-clear]")) {
           if (!window.confirm("Excluir permanentemente todo o histórico de keys deste navegador?")) return;
           if (!window.confirm("Confirma a exclusão? Essa ação não pode ser desfeita.")) return;
@@ -384,20 +420,48 @@
       });
       this.render();
     }
+    filteredRecords(records) {
+      // Mesma filtragem aplicada à lista visível e ao ZIP.
+      const search = q(this, "#history-search").value.trim().toLowerCase();
+      const selectedEnding = q(this, "#history-ending").value;
+      return records.filter(record => {
+        const token = String(extractConfigKeys(record.content || "").key_sn_token_unitvfree || "").trim().toUpperCase();
+        const ending = token.slice(-4);
+        const allowed = selectedEnding === "all" ||
+          (selectedEnding === "allowed" ? ALLOWED_TOKEN_ENDINGS.includes(ending) : ending === selectedEnding);
+        return allowed && [record.mac, record.userId, record.deviceId, ...Object.values(record.keys || {}), token]
+          .some(value => String(value || "").toLowerCase().includes(search));
+      });
+    }
+    downloadFilteredZip() {
+      try {
+        const records = readConfigRecords();
+        const matches = this.filteredRecords(records).filter(record => typeof record.content === "string" && record.content.length > 0);
+        if (!matches.length) {
+          this.toast("Nenhuma key corresponde aos filtros. Ajuste o filtro ou a pesquisa antes de baixar.", "error");
+          return;
+        }
+        // Mantém a numeração original do histórico mesmo quando apenas parte dele é exportada.
+        const positions = new Map(records.map((record, index) => [record, index + 1]));
+        const entries = matches.map(record => ({
+          name: `KEYS_FILTRADAS/${configFilenameFor(record.content, positions.get(record))}`,
+          content: record.content
+        }));
+        const selectedEnding = q(this, "#history-ending").value;
+        const label = selectedEnding === "all" ? "TODAS" : selectedEnding === "allowed" ? "5_FINAIS" : selectedEnding;
+        const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
+        const filename = `KEYS_FILTRADAS_${label}_${stamp}.zip`;
+        downloadBlob(ConfigCore.createZip(entries), filename);
+        this.toast(`ZIP de ${entries.length} arquivo(s) .config enviado para download.`);
+      } catch (error) {
+        this.toast(`Falha ao preparar ZIP: ${error.message}`, "error");
+      }
+    }
     render() {
       let records;
       try { records = readConfigRecords(); }
       catch (error) { q(this, "[data-history-count]").textContent = error.message; return; }
-      const search = q(this, "#history-search").value.trim().toLowerCase();
-      const selectedEnding = q(this, "#history-ending").value;
-      const matches = records.filter(r => {
-        const token = String(extractConfigKeys(r.content || "").key_sn_token_unitvfree || "").trim().toUpperCase();
-        const ending = token.slice(-4);
-        const allowed = selectedEnding === "all" ||
-          (selectedEnding === "allowed" ? ALLOWED_TOKEN_ENDINGS.includes(ending) : ending === selectedEnding);
-        return allowed && [r.mac, r.userId, r.deviceId, ...Object.values(r.keys || {}), token]
-          .some(v => String(v || "").toLowerCase().includes(search));
-      });
+      const matches = this.filteredRecords(records);
       q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
       q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
         <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
