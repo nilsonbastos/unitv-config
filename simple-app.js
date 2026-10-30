@@ -8,6 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
+const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536"];
 
 function extractConfigKeys(content) {
   const keys = {};
@@ -477,11 +478,38 @@ function randomUniqueUser(history) {
             <label for="history-search">Pesquisar MAC, User ID ou token</label>
             <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
           </div>
+          <div class="field" style="margin:12px 0">
+            <label for="history-ending">Filtrar final da key</label>
+            <select id="history-ending" style="width:100%;padding:10px">
+              <option value="allowed">Somente os 5 finais permitidos</option>
+              <option value="7453">Final 7453</option>
+              <option value="4855">Final 4855</option>
+              <option value="6930">Final 6930</option>
+              <option value="4134">Final 4134</option>
+              <option value="4536">Final 4536</option>
+              <option value="all">Todas as keys</option>
+            </select>
+          </div>
+          <button class="button button-outline" data-history-clear style="margin:10px 0">Excluir histórico das keys</button>
           <p data-history-count></p>
           <div data-history-results></div>
         </section>`;
       this.querySelector("#history-search").addEventListener("input", () => this.render());
+      this.querySelector("#history-ending").addEventListener("change", () => this.render());
       this.addEventListener("click", event => {
+        if (event.target.closest("[data-history-clear]")) {
+          if (!window.confirm("Excluir permanentemente todo o histórico de keys deste navegador?")) return;
+          if (!window.confirm("Confirma a exclusão? Essa ação não pode ser desfeita.")) return;
+          try {
+            localStorage.removeItem(CONFIG_RECORDS_KEY);
+            localStorage.removeItem(HISTORY_KEY);
+            this.render();
+            this.toast("Histórico de keys excluído.");
+          } catch (error) {
+            this.toast("Falha ao excluir histórico: " + error.message, "error");
+          }
+          return;
+        }
         const button = event.target.closest("[data-history-download]");
         if (!button) return;
         const record = readConfigRecords().find(r => r.id === button.dataset.historyDownload);
@@ -500,8 +528,15 @@ function randomUniqueUser(history) {
         return;
       }
       const search = q(this, "#history-search").value.trim().toLowerCase();
-      const matches = records.filter(r => [r.mac, r.userId, r.deviceId,
-        ...Object.values(r.keys || {})].some(v => String(v || "").toLowerCase().includes(search)));
+      const selectedEnding = q(this, "#history-ending").value;
+      const matches = records.filter(r => {
+        const token = String(extractConfigKeys(r.content || "").key_sn_token_unitvfree || "").trim().toUpperCase();
+        const ending = token.slice(-4);
+        const allowed = selectedEnding === "all" ||
+          (selectedEnding === "allowed" ? ALLOWED_TOKEN_ENDINGS.includes(ending) : ending === selectedEnding);
+        return allowed && [r.mac, r.userId, r.deviceId,
+          ...Object.values(r.keys || {}), token].some(v => String(v || "").toLowerCase().includes(search));
+      });
       q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
       q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
         <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
