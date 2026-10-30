@@ -41,7 +41,7 @@
       throw new Error("Digite exatamente 4 caracteres hexadecimais (0-9 ou A-F), ou deixe em branco.");
     }
     if (!supportedEndingMap().has(desired)) {
-      throw new Error(`Final ${desired} indisponível neste core.js. Finais possíveis: ${Array.from(supportedEndingMap().keys()).sort().join(", ")}.`);
+      throw new Error(`Final ${desired} não pode ser gerado pelo core.js que está carregado neste site. Escolha um destes: ${Array.from(supportedEndingMap().keys()).sort().join(", ")}.`);
     }
     return [desired];
   }
@@ -189,12 +189,8 @@
               <div class="field" style="margin:12px 0">
                 <label for="single-token-ending">Escolher os 4 caracteres finais da key (opcional)</label>
                 <input id="single-token-ending" maxlength="4" placeholder="Ex.: 4134 (vazio = automático)" list="token-ending-suggestions" spellcheck="false" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
-                <datalist id="token-ending-suggestions">
-                  <option value="7453"></option><option value="4855"></option><option value="6930"></option>
-                  <option value="4134"></option><option value="4536"></option><option value="2B78"></option>
-                  <option value="6E38"></option><option value="5732"></option><option value="7161"></option>
-                </datalist>
-                <p class="field-hint">Vazio: sorteia entre 7453, 4855, 6930, 4134 e 4536. Também aceita os outros finais possíveis do core.js: 2B78, 6E38, 5732 e 7161.</p>
+                <datalist id="token-ending-suggestions"></datalist>
+                <p class="field-hint" data-ending-hint>Carregando finais permitidos...</p>
               </div>
               <div class="button-row"><button class="button button-primary" data-action="generate-config">Gerar config</button></div>
               <p class="field-hint">O final escolhido é verificado antes de salvar. Cada novo MAC e Device ID é único no histórico deste navegador, mas o token completo pode se repetir.</p>
@@ -222,10 +218,21 @@
             <div class="preview-foot"><span data-preview-name>.config</span><span data-preview-size>0 bytes</span></div>
           </section>
         </div>`;
+      // Gera as sugestões usando o core.js realmente carregado no navegador.
+      // Não apresenta finais inventados nem depende de uma lista desatualizada.
+      const availableEndings = [...supportedEndingMap().keys()].sort();
+      q(this, "#token-ending-suggestions").innerHTML = availableEndings
+        .map(ending => `<option value="${ending}"></option>`).join("");
+      q(this, "[data-ending-hint]").textContent =
+        `Deixe vazio para gerar entre ${ALLOWED_TOKEN_ENDINGS.join(", ")}. ` +
+        `Finais que este core.js realmente produz: ${availableEndings.join(", ")}. ` +
+        `Outros finais não podem ser gerados com este algoritmo.`;
+
       this.addEventListener("click", event => this.onClick(event));
       this.addEventListener("input", event => {
         if (event.target.matches("input")) {
           this.acceptedConfig = null;
+          this.acceptedEndings = null;
           this.files = {};
           this.updatePreview();
         }
@@ -374,15 +381,7 @@
             <select id="history-ending" style="width:100%;padding:10px">
               <option value="all">Todas as keys</option>
               <option value="allowed">Somente os 5 finais padrão</option>
-              <option value="7453">Final 7453</option>
-              <option value="4855">Final 4855</option>
-              <option value="6930">Final 6930</option>
-              <option value="4134">Final 4134</option>
-              <option value="4536">Final 4536</option>
-              <option value="2B78">Final 2B78</option>
-              <option value="6E38">Final 6E38</option>
-              <option value="5732">Final 5732</option>
-              <option value="7161">Final 7161</option>
+              <!-- Opções reais são adicionadas abaixo após ler ConfigCore.encodeSnToken -->
             </select>
           </div>
           <div class="button-row" style="margin:12px 0;display:flex;flex-wrap:wrap;gap:10px">
@@ -392,8 +391,24 @@
           <p class="field-hint">O ZIP incluirá somente os arquivos .config exibidos pelos filtros de final e pesquisa acima, sem apagar o histórico.</p>
           <p data-history-count></p><div data-history-results></div>
         </section>`;
+      // Exibe todos os finais reconhecidos pelo core.js. Também inclui finais
+      // que já existem nos registros, caso tenham vindo de uma versão anterior.
+      const endingValues = new Set(supportedEndingMap().keys());
+      try {
+        readConfigRecords().forEach(record => {
+          const ending = tokenEnding(record.content || "");
+          if (/^[0-9A-F]{4}$/.test(ending)) endingValues.add(ending);
+        });
+      } catch (_) { /* histórico inválido será informado no render() */ }
+      const endingSelect = q(this, "#history-ending");
+      for (const ending of [...endingValues].sort()) {
+        const option = document.createElement("option");
+        option.value = ending;
+        option.textContent = `Final ${ending}`;
+        endingSelect.append(option);
+      }
       q(this, "#history-search").addEventListener("input", () => this.render());
-      q(this, "#history-ending").addEventListener("change", () => this.render());
+      endingSelect.addEventListener("change", () => this.render());
       this.addEventListener("click", event => {
         if (event.target.closest("[data-history-zip]")) {
           this.downloadFilteredZip();
@@ -549,3 +564,4 @@
   customElements.define("history-view", HistoryView);
   customElements.define("studio-app", StudioApp);
 })();
+
