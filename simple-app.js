@@ -1,18 +1,179 @@
-(function () {
-  "use strict";
 
+(function () {
   const q = (root, selector) => root.querySelector(selector);
-  const qa = (root, selector) => Array.from(root.querySelectorAll(selector));
+
+  const qa = (root, selector) =>
+    Array.from(root.querySelectorAll(selector));
+  
+const HISTORY_KEY = "unitv_config_used_ids_v1";
+
+const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
+const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
+const FILTER_ATTEMPT_LIMIT = 5000;
+
+function extractConfigKeys(content) {
+  const keys = {};
+  for (const line of String(content || "").split(/\r?\n/)) {
+    const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
+    if (match) keys[match[1]] = match[2].trim();
+  }
+  return keys;
+}
+
+
+function readConfigRecords() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CONFIG_RECORDS_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch (error) {
+    throw new Error("Não foi possível ler o histórico de configurações.");
+  }
+}
+
+function storeConfigRecord(config) {
+  const records = readConfigRecords();
+  const content = config.files?.[".config"];
+  if (!content) throw new Error("Configuração sem arquivo .config.");
+  const keys = extractConfigKeys(content);
+  records.push({
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    mac: config.mac || q(document, "#single-mac")?.value || "",
+    userId: config.user_id || q(document, "#single-user")?.value || "",
+    deviceId: config.device_id_hex || "",
+    filename: randomConfigFilename(),
+    content,
+    keys
+  });
+  localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[char]);
+}
+
+
+function loadHistory() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(HISTORY_KEY) || "{}"
+    );
+
+    return {
+      macs: new Set(saved.macs || []),
+      users: new Set(saved.users || []),
+      devices: new Set(saved.devices || [])
+    };
+  } catch (error) {
+    console.error("Erro ao ler histórico:", error);
+    throw new Error("Não foi possível ler o histórico.");
+  }
+}
+
+function saveHistory(history) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify({
+    macs: [...history.macs],
+    users: [...history.users],
+    devices: [...history.devices]
+  }));
+}
+
+function randomUniqueMac(history) {
+  const prefix = "9C:00:D3:EC:AA:";
+
+  if (history.macs.size >= 256) {
+    const usedPrefix = [...history.macs]
+      .filter(mac => mac.startsWith(prefix));
+
+    if (usedPrefix.length >= 256) {
+      throw new Error(
+        "Todos os 256 MACs deste prefixo já foram usados."
+      );
+    }
+  }
+
+  const available = [];
+
+  for (let i = 0; i < 256; i++) {
+    const mac = prefix +
+      i.toString(16).padStart(2, "0").toUpperCase();
+
+    if (!history.macs.has(mac)) {
+      available.push(mac);
+    }
+  }
+
+  if (!available.length) {
+    throw new Error("Não há MACs disponíveis.");
+  }
+
+  const bytes = new Uint32Array(1);
+  const limit = Math.floor(4294967296 / available.length)
+    * available.length;
+
+  do {
+    crypto.getRandomValues(bytes);
+  } while (bytes[0] >= limit);
+
+  return available[bytes[0] % available.length];
+}
+
+function randomUniqueUser(history) {
+  for (let i = 0; i < 1000; i++) {
+    const bytes = new Uint32Array(1);
+    crypto.getRandomValues(bytes);
+
+    const user = String(
+      500000000 + (bytes[0] % 100000000)
+    );
+
+    if (!history.users.has(user)) return user;
+  }
+
+  throw new Error("Não foi possível gerar User ID único.");
+}
+
 
   function downloadBlob(blob, filename) {
+    // Dentro do APK Android
+    if (
+      window.AndroidFiles &&
+      typeof window.AndroidFiles.saveFile === "function"
+    ) {
+      const reader = new FileReader();
+
+      reader.onloadend = function () {
+        const base64 = reader.result.split(",")[1];
+
+        window.AndroidFiles.saveFile(
+          base64,
+          filename,
+          blob.type || "application/octet-stream"
+        );
+      };
+
+      reader.onerror = function () {
+        console.error("Erro ao preparar arquivo");
+      };
+
+      reader.readAsDataURL(blob);
+      return;
+    }
+
+    // Download normal no navegador
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
+
     link.href = url;
     link.download = filename;
     link.style.display = "none";
+
     document.body.append(link);
     link.click();
     link.remove();
+
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
@@ -72,14 +233,17 @@
     connectedCallback() {
       this.files = {};
       this.currentFile = ".config";
+      this.filteredResults = [];
+      this.filterRunning = false;
+      this.filterStopRequested = false;
       this.innerHTML = `
         <div class="generator-layout">
           <section class="panel panel-pad">
             
             <div class="form-stack" style="margin-top:16px">
               <div class="field-grid">
-                <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AA:01" spellcheck="false" autocomplete="off"></div>
-                <div class="field"><label for="single-user">User ID</label><input id="single-user" value="545050564" inputmode="numeric" spellcheck="false"></div>
+                <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AB:AA" spellcheck="false" autocomplete="off"></div>
+                <div class="field"><label for="single-user">User ID</label><input id="single-user" value="538746151" inputmode="numeric" spellcheck="false"></div>
               </div>
               <div class="field"><label for="single-device">Device ID em Base64</label><input id="single-device" placeholder="Gerado automaticamente" spellcheck="false" autocomplete="off"></div>
               <div class="field-grid">
@@ -89,6 +253,15 @@
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-config">Gerar config</button>
               </div>
+              <div class="form-divider"></div>
+              <h3>Gerar configs por final da key</h3>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
+              <div class="button-row">
+                <button class="button button-primary" data-action="generate-filtered">Procurar configs filtradas</button>
+                <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
+              </div>
+              <p class="field-hint" data-filter-status aria-live="polite">Limite: 5.000 tentativas por busca. Os arquivos encontrados são baixados individualmente.</p>
+              <div data-filter-results></div>
               <p class="field-hint">A configuração é montada neste navegador. Nenhum campo é enviado a um servidor.</p>
               <div class="form-divider"></div>
               <div class="button-row">
@@ -172,19 +345,138 @@
       }
       const action = event.target.closest("[data-action]")?.dataset.action;
       if (action === "generate-config") {
-        const suffix = Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase();
-        q(this, "#single-mac").value = `9C:00:D3:EC:AA:${suffix}`;
-        q(this, "#single-user").value = ConfigCore.randomUserId();
-        q(this, "#single-folder").value = `CONFIG_${Date.now().toString().slice(-6)}`;
-        q(this, "#single-device").value = "";
-        this.generate();
-        this.toast("Nova config gerada.");
+        try {
+          const history = loadHistory();
+          const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
+            .map(selector => q(this, selector).value);
+          const mac = randomUniqueMac(history);
+          const userId = randomUniqueUser(history);
+          let config = null;
+          try {
+            q(this, "#single-mac").value = mac;
+            q(this, "#single-user").value = userId;
+            q(this, "#single-folder").value =
+              `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+            for (let attempt = 0; attempt < 100; attempt++) {
+              q(this, "#single-device").value = "";
+              config = this.makeConfig();
+              if (!history.devices.has(config.device_id_hex)) break;
+              config = null;
+            }
+            if (!config) throw new Error("Não foi possível gerar Device ID inédito.");
+            history.macs.add(mac);
+            history.users.add(userId);
+            history.devices.add(config.device_id_hex);
+            // Grava primeiro o arquivo e as keys; se o armazenamento estiver cheio,
+            // a geração não é marcada como concluída.
+            storeConfigRecord(config);
+            try {
+              saveHistory(history);
+            } catch (error) {
+              const records = readConfigRecords();
+              records.pop();
+              localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
+              throw error;
+            }
+          } catch (error) {
+            ["#single-mac", "#single-user", "#single-folder", "#single-device"]
+              .forEach((selector, index) => { q(this, selector).value = oldValues[index]; });
+            throw error;
+          }
+          this.files = config.files;
+          q(this, "#single-device").value = ConfigCore.decodeHex(config.device_id_hex).text;
+          this.updatePreview();
+          this.toast("Nova config gerada e registrada no histórico.");
+        } catch (error) {
+          console.error("Erro ao gerar configuração:", error);
+          this.toast(error.message || "Erro ao gerar configuração.", "error");
+        }
+        return;
+      }
+      if (action === "generate-filtered") { this.generateFiltered(); return; }
+      if (action === "stop-filtered") { this.filterStopRequested = true; return; }
+      if (action === "download-filtered") {
+        const index = Number(event.target.closest("[data-filter-index]")?.dataset.filterIndex);
+        const record = this.filteredResults[index];
+        if (!record) return this.toast("Arquivo não encontrado.", "error");
+        downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), record.filename);
+        this.toast("Download individual iniciado.");
+        return;
       }
       if (action === "copy") this.copyCurrent();
       if (action === "download-current") this.downloadCurrent();
       if (action === "download-config") this.downloadConfig();
       if (action === "download-zip") this.downloadZip();
       if (action === "save-folder") this.saveFolder();
+    }
+
+    async generateFiltered() {
+      if (this.filterRunning) return;
+      this.filterRunning = true;
+      this.filterStopRequested = false;
+      this.filteredResults = [];
+      const status = q(this, "[data-filter-status]");
+      const results = q(this, "[data-filter-results]");
+      const start = q(this, '[data-action="generate-filtered"]');
+      const stop = q(this, '[data-action="stop-filtered"]');
+      start.disabled = true;
+      stop.disabled = false;
+      results.replaceChildren();
+      let attempts = 0;
+      try {
+        const history = loadHistory();
+        const channelCode = q(this, "#single-channel").value;
+        // Cada tentativa gera uma configuração real; não modifica nem força os tokens.
+        while (attempts < FILTER_ATTEMPT_LIMIT && !this.filterStopRequested) {
+          for (let batch = 0; batch < 50 && attempts < FILTER_ATTEMPT_LIMIT && !this.filterStopRequested; batch++) {
+            attempts++;
+            const mac = randomUniqueMac(history);
+            const userId = randomUniqueUser(history);
+            const folder = `CONFIG_FILTRO_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
+            const config = ConfigCore.generateConfig({ mac, userId, folder, channelCode });
+            const content = config.files?.[".config"] || "";
+            const keys = extractConfigKeys(content);
+            const token = String(keys.key_sn_token_unitvfree || "").toUpperCase();
+            const ending = ALLOWED_TOKEN_ENDINGS.find(end => token.endsWith(end));
+            if (!ending || history.devices.has(config.device_id_hex)) continue;
+            const filename = randomConfigFilename();
+            // Salva apenas as configurações encontradas, não as tentativas descartadas.
+            storeConfigRecord(config);
+            history.macs.add(mac);
+            history.users.add(userId);
+            history.devices.add(config.device_id_hex);
+            saveHistory(history);
+            const index = this.filteredResults.push({ content, filename, ending }) - 1;
+            const article = document.createElement("article");
+            article.className = "panel";
+            article.style.cssText = "padding:12px;margin:10px 0;overflow-wrap:anywhere";
+            const title = document.createElement("p");
+            title.textContent = `Config ${index + 1} — final ${ending} — ${filename}`;
+            const button = document.createElement("button");
+            button.className = "button button-outline";
+            button.textContent = "Baixar .config individual";
+            button.dataset.action = "download-filtered";
+            button.dataset.filterIndex = String(index);
+            article.append(title, button);
+            results.append(article);
+          }
+          status.textContent = `${attempts.toLocaleString("pt-BR")} tentativas; ${this.filteredResults.length} configs encontradas.`;
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        status.textContent = `${this.filterStopRequested ? "Busca interrompida" : "Busca concluída"}: ${attempts.toLocaleString("pt-BR")} tentativas, ${this.filteredResults.length} configs encontradas. ${this.filteredResults.length ? "Baixe cada uma pelo botão correspondente." : "Nenhum dos 8 finais apareceu. Tente novamente se desejar."}`;
+      } catch (error) {
+        status.textContent = `Busca encerrada após ${attempts} tentativas: ${error.message}`;
+        this.toast(error.message || "Erro na busca filtrada.", "error");
+      } finally {
+        this.filterRunning = false;
+        start.disabled = false;
+        stop.disabled = true;
+      }
+    }
+
+    currentConfig() {
+      // Usa os dados exibidos, sem sortear novos identificadores ao baixar.
+      return this.makeConfig();
     }
 
     async copyCurrent() {
@@ -204,34 +496,93 @@
 
     downloadCurrent() {
       if (this.currentFile === ".config") return this.downloadConfig();
-      downloadBlob(new Blob([this.files[this.currentFile] || ""], { type: "application/octet-stream" }), this.currentFile);
+      const content = this.files[this.currentFile] || "";
+      if (!content) return this.toast("Gere a configuração primeiro.", "error");
+      downloadBlob(new Blob([content], { type: "application/octet-stream" }), this.currentFile);
       this.toast(`${this.currentFile} baixado.`);
     }
 
     downloadConfig() {
-      const config = this.generate();
-      if (!config || !config.files[".config"]) return this.toast("Gere ou carregue um arquivo primeiro.", "error");
-      downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
-      this.toast("Arquivo .config baixado com a extensão correta.");
+      try {
+        const config = this.currentConfig();
+        if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
+        downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
+        this.toast("Arquivo .config enviado para download.");
+      } catch (error) {
+        this.toast(`Falha no download: ${error.message}`, "error");
+      }
     }
 
     downloadZip() {
-      const config = this.generate();
-      if (!config) return;
-      downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
-      this.toast("Pacote ZIP baixado.");
+      try {
+        const config = this.currentConfig();
+        downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
+        this.toast("Pacote ZIP enviado para download.");
+      } catch (error) {
+        this.toast(`Falha no ZIP: ${error.message}`, "error");
+      }
     }
 
     async saveFolder() {
-      const config = this.generate();
-      if (!config) return;
       try {
+        const config = this.currentConfig();
         const result = await saveConfig(config);
         if (result === "folder") this.toast(`Arquivos salvos na pasta ${config.folder_name}.`);
-        if (result === "zip") this.toast("Este navegador não permite selecionar uma pasta aqui; baixei um ZIP com os arquivos.");
+        if (result === "zip") this.toast("Download do ZIP iniciado.");
       } catch (error) {
         this.toast(`Falha ao salvar: ${error.message}`, "error");
       }
+    }
+  }
+
+  class HistoryView extends ViewElement {
+    connectedCallback() {
+      this.innerHTML = `
+        <section class="panel panel-pad" style="padding:20px">
+          <h2>Histórico de Keys</h2>
+          <p class="field-hint">Registros deste navegador, a partir desta atualização. Tokens são dados sensíveis: não compartilhe capturas com as keys visíveis.</p>
+          <div class="field" style="margin:16px 0">
+            <label for="history-search">Pesquisar MAC, User ID ou token</label>
+            <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
+          </div>
+          <p data-history-count></p>
+          <div data-history-results></div>
+        </section>`;
+      this.querySelector("#history-search").addEventListener("input", () => this.render());
+      this.addEventListener("click", event => {
+        const button = event.target.closest("[data-history-download]");
+        if (!button) return;
+        const record = readConfigRecords().find(r => r.id === button.dataset.historyDownload);
+        if (!record) return this.toast("Registro não encontrado.", "error");
+        downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), record.filename);
+        this.toast("Download do arquivo .config iniciado.");
+      });
+      this.render();
+    }
+
+    render() {
+      let records;
+      try { records = readConfigRecords(); }
+      catch (error) {
+        q(this, "[data-history-count]").textContent = error.message;
+        return;
+      }
+      const search = q(this, "#history-search").value.trim().toLowerCase();
+      const matches = records.filter(r => [r.mac, r.userId, r.deviceId,
+        ...Object.values(r.keys || {})].some(v => String(v || "").toLowerCase().includes(search)));
+      q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
+      q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
+        <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
+          <p><strong>${escapeHtml(new Date(r.createdAt).toLocaleString("pt-BR"))}</strong></p>
+          <p><strong>MAC:</strong> ${escapeHtml(r.mac)} | <strong>User ID:</strong> ${escapeHtml(r.userId)}</p>
+          <p><strong>Device ID:</strong> ${escapeHtml(r.deviceId)}</p>
+          <details><summary>Mostrar keys</summary>
+            <p><strong>key_n_bt</strong><br><code>${escapeHtml(r.keys?.key_n_bt || "Não encontrada")}</code></p>
+            <p><strong>key_device_id_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_device_id_unitvfree || "Não encontrada")}</code></p>
+            <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_sn_token_unitvfree || "Não encontrada")}</code></p>
+          </details>
+          <button class="button button-outline" style="margin-top:12px" data-history-download="${escapeHtml(r.id)}">Baixar .config novamente</button>
+        </article>`).join("") : "<p>Nenhuma configuração encontrada.</p>";
     }
   }
 
@@ -269,9 +620,11 @@
           <nav class="view-tabs" aria-label="Seções">
             <button class="view-tab" data-view="generator" aria-selected="true">Gerador 2027</button>
             <button class="view-tab" data-view="apps" aria-selected="false">Aplicativos</button>
+              <button class="view-tab" data-view="history" aria-selected="false">Histórico de Keys</button>
           </nav>
           <section class="view-panel" data-panel="generator"><single-generator-view></single-generator-view></section>
           <section class="view-panel" data-panel="apps" hidden><apps-view></apps-view></section>
+          <section class="view-panel" data-panel="history" hidden><history-view></history-view></section>
           <footer class="footer-note">
             <span>HTML5 · CSS3 · JS Vanilla· Web Components</span>
             <nav class="footer-actions" aria-label="Links do projeto">
@@ -297,11 +650,13 @@
       if (!button) return;
       qa(this, "[data-view]").forEach(tab => tab.setAttribute("aria-selected", String(tab === button)));
       qa(this, "[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== button.dataset.view; });
-      const apps = button.dataset.view === "apps";
-      q(this, "[data-page-title]").textContent = apps ? "Aplicativos" : "Gerador individual";
-      q(this, "[data-page-note]").textContent = apps
+      const view = button.dataset.view;
+      q(this, "[data-page-title]").textContent = view === "apps" ? "Aplicativos" : view === "history" ? "Histórico de Keys" : "Gerador individual";
+      q(this, "[data-page-note]").textContent = view === "apps"
         ? "Baixe os pacotes disponíveis na pasta local de aplicativos."
+        : view === "history" ? "Pesquise as configurações salvas neste navegador."
         : "Gere, revise e salve arquivos diretamente no navegador. Os valores ficam no dispositivo.";
+      if (view === "history") q(this, "history-view")?.render();
     }
 
     showToast(detail) {
@@ -316,5 +671,6 @@
 
   customElements.define("single-generator-view", SingleGeneratorView);
   customElements.define("apps-view", AppsView);
+  customElements.define("history-view", HistoryView);
   customElements.define("studio-app", StudioApp);
 })();
