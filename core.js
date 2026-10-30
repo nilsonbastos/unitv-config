@@ -55,43 +55,14 @@
     return bytes;
   }
 
-  // Algoritmo próprio v1: identificador determinístico de 24 bytes.
-  // NÃO é um token de autenticação do UniTV Free.
-  // Considera D3:88:DC:XX e inclui os quatro bytes no resultado.
   function encodeSnToken(mac) {
     const clean = String(mac).trim().toUpperCase();
-    if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(clean)) {
-      throw new Error("MAC inválido.");
-    }
     const parts = clean.split(":");
-    const tail = parts.slice(2).map(part => parseInt(part, 16));
-    const bytes = new Uint8Array(24);
-    bytes.set(tail, 0);
-    // Mistura determinística FNV-1a + avalanche; não é criptografia.
-    let state = 0x811c9dc5;
-    for (const byte of tail) {
-      state = Math.imul(state ^ byte, 0x01000193) >>> 0;
-    }
-    for (let i = 4; i < bytes.length; i++) {
-      state ^= state >>> 13;
-      state = Math.imul(state, 0x85ebca6b) >>> 0;
-      state ^= state >>> 16;
-      state = Math.imul(state, 0xc2b2ae35) >>> 0;
-      state ^= state >>> 13;
-      bytes[i] = state & 255;
-      state = (state + i + tail[i % 4]) >>> 0;
-    }
-    // Os dois últimos caracteres Base64 representam o final hexadecimal escolhido.
-    // Este é um formato próprio do projeto, não um token UniTV Free.
-    const allowedEndings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
-    const chosen = typeof document !== "undefined"
-      ? document.querySelector("#experimental-token-ending")?.value
-      : null;
-    const ending = allowedEndings.includes(chosen)
-      ? chosen
-      : allowedEndings[tail[3] % allowedEndings.length];
-    const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
-    const base64 = bytesToBase64(bytes).slice(0, -2) + endingChars;
+    const lastByte = parts.length === 6 ? parts[5] : clean.length === 12 ? clean.slice(10, 12) : clean.slice(15, 17);
+    const firstNibble = BLOCK_1_MAP[lastByte[0]] ? lastByte[0] : "6";
+    const secondNibble = BLOCK_2_MAP[lastByte[1]] ? lastByte[1] : "F";
+    const bytes = hexToBytes(BLOCK_0_HEX + BLOCK_1_MAP[firstNibble] + BLOCK_2_MAP[secondNibble]);
+    const base64 = bytesToBase64(bytes);
     return { hex: asciiToHex(base64), base64 };
   }
 
@@ -182,7 +153,7 @@
   }
 
   function generateConfig(options = {}) {
-    const mac = String(options.mac || "9C:00:D3:A5:AB:00").trim().toUpperCase();
+    const mac = String(options.mac || "9C:00:D3:EC:AA:01").trim().toUpperCase();
     if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) {
       throw new Error("MAC inválido. Use o formato 00:11:22:AA:BB:CC.");
     }
@@ -328,55 +299,6 @@
       ["setUint32", [16, localData.length, true]], ["setUint16", [20, 0, true]]
     ]);
     return new Blob([localData, centralData, end], { type: "application/zip" });
-  }
-
-  // Controle de final para identificadores experimentais.
-  // Inserido sem alterar o histórico ou o simple-app.js existente.
-  function installEndingSelector() {
-    const macField = document.querySelector("#single-mac");
-    if (!macField || document.querySelector("#experimental-token-ending")) return;
-    const container = document.createElement("div");
-    container.className = "field";
-    container.style.marginTop = "12px";
-    const label = document.createElement("label");
-    label.htmlFor = "experimental-token-ending";
-    label.textContent = "Final do identificador experimental";
-    const select = document.createElement("select");
-    select.id = "experimental-token-ending";
-    select.style.cssText = "width:100%;padding:11px;border-radius:8px";
-    const endings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
-    const auto = document.createElement("option");
-    auto.value = "";
-    auto.textContent = "Automático pelo MAC";
-    select.append(auto);
-    endings.forEach(value => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      select.append(option);
-    });
-    const note = document.createElement("p");
-    note.className = "field-hint";
-    note.textContent = "Somente para testes de formato; não é uma key de ativação oficial.";
-    select.addEventListener("change", () => {
-      macField.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    container.append(label, select, note);
-    const parent = macField.closest(".field");
-    if (parent) parent.after(container);
-  }
-
-  if (typeof document !== "undefined") {
-    const observer = new MutationObserver(installEndingSelector);
-    const start = () => {
-      installEndingSelector();
-      observer.observe(document.body, { childList: true, subtree: true });
-    };
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", start, { once: true });
-    } else {
-      start();
-    }
   }
 
   window.ConfigCore = Object.freeze({
