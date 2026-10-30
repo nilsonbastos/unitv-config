@@ -81,7 +81,12 @@
       bytes[i] = state & 255;
       state = (state + i + tail[i % 4]) >>> 0;
     }
-    const base64 = bytesToBase64(bytes);
+    // Os dois últimos caracteres Base64 representam o final hexadecimal escolhido.
+    // Este é um formato próprio do projeto, não um token UniTV Free.
+    const allowedEndings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
+    const ending = allowedEndings[tail[3] % allowedEndings.length];
+    const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
+    const base64 = bytesToBase64(bytes).slice(0, -2) + endingChars;
     return { hex: asciiToHex(base64), base64 };
   }
 
