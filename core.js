@@ -55,7 +55,7 @@
     return bytes;
   }
 
-  // Algoritmo próprio v1: identificador determinístico de 24 bytes.
+  // Algoritmo próprio v2: identificador experimental com prefixo fixo.
   // NÃO é um token de autenticação do UniTV Free.
   // Considera D3:88:DC:XX e inclui os quatro bytes no resultado.
   function encodeSnToken(mac) {
@@ -86,8 +86,19 @@
     const allowedEndings = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
     const ending = allowedEndings[tail[3] % allowedEndings.length];
     const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
-    const base64 = bytesToBase64(bytes).slice(0, -2) + endingChars;
-    return { hex: asciiToHex(base64), base64 };
+    // Modo experimental: reproduz somente o prefixo de formato observado.
+    // O prefixo tem 23 dígitos hexadecimais; acrescentamos um nibble para
+    // completar o último byte ASCII, sem modificar os 23 dígitos fixos.
+    const fixedHexPrefix = "546e47536258744973477";
+    const completedPrefix = fixedHexPrefix + "1";
+    const prefixText = Array.from(hexToBytes(completedPrefix), byte => String.fromCharCode(byte)).join("");
+    const original = bytesToBase64(bytes);
+    const base64 = prefixText + original.slice(prefixText.length, -2) + endingChars;
+    const hex = asciiToHex(base64);
+    if (!hex.startsWith(fixedHexPrefix) || !allowedEndings.includes(hex.slice(-4).toUpperCase())) {
+      throw new Error("Falha na montagem do identificador experimental.");
+    }
+    return { hex, base64 };
   }
 
   function generateDeviceId() {
