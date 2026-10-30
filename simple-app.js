@@ -9,7 +9,7 @@ const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
 const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
-const FILTER_ATTEMPT_LIMIT = 5000;
+
 
 function extractConfigKeys(content) {
   const keys = {};
@@ -260,7 +260,7 @@ function randomUniqueUser(history) {
                 <button class="button button-primary" data-action="generate-filtered">Procurar configs filtradas</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
               </div>
-              <p class="field-hint" data-filter-status aria-live="polite">Limite: 5.000 tentativas por busca. Os arquivos encontrados são baixados individualmente.</p>
+              <p class="field-hint" data-filter-status aria-live="polite">Verificação direta das combinações possíveis. Os arquivos encontrados são baixados individualmente.</p>
               <div data-filter-results></div>
               <p class="field-hint">A configuração é montada neste navegador. Nenhum campo é enviado a um servidor.</p>
               <div class="form-divider"></div>
@@ -422,50 +422,72 @@ function randomUniqueUser(history) {
       start.disabled = true;
       stop.disabled = false;
       results.replaceChildren();
-      let attempts = 0;
+      let checked = 0;
       try {
         const history = loadHistory();
         const channelCode = q(this, "#single-channel").value;
-        // Cada tentativa gera uma configuração real; não modifica nem força os tokens.
-        while (attempts < FILTER_ATTEMPT_LIMIT && !this.filterStopRequested) {
-          for (let batch = 0; batch < 50 && attempts < FILTER_ATTEMPT_LIMIT && !this.filterStopRequested; batch++) {
-            attempts++;
-            const mac = randomUniqueMac(history);
-            const userId = randomUniqueUser(history);
-            const folder = `CONFIG_FILTRO_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
-            const config = ConfigCore.generateConfig({ mac, userId, folder, channelCode });
-            const content = config.files?.[".config"] || "";
-            const keys = extractConfigKeys(content);
-            const token = String(keys.key_sn_token_unitvfree || "").toUpperCase();
-            const ending = ALLOWED_TOKEN_ENDINGS.find(end => token.endsWith(end));
-            if (!ending || history.devices.has(config.device_id_hex)) continue;
-            const filename = randomConfigFilename();
-            // Salva apenas as configurações encontradas, não as tentativas descartadas.
-            storeConfigRecord(config);
-            history.macs.add(mac);
-            history.users.add(userId);
-            history.devices.add(config.device_id_hex);
-            saveHistory(history);
-            const index = this.filteredResults.push({ content, filename, ending }) - 1;
-            const article = document.createElement("article");
-            article.className = "panel";
-            article.style.cssText = "padding:12px;margin:10px 0;overflow-wrap:anywhere";
-            const title = document.createElement("p");
-            title.textContent = `Config ${index + 1} — final ${ending} — ${filename}`;
-            const button = document.createElement("button");
-            button.className = "button button-outline";
-            button.textContent = "Baixar .config individual";
-            button.dataset.action = "download-filtered";
-            button.dataset.filterIndex = String(index);
-            article.append(title, button);
-            results.append(article);
+        const prefix = "9C:00:D3:EC:AA:";
+        const candidates = [];
+        const perEnding = Object.fromEntries(ALLOWED_TOKEN_ENDINGS.map(ending => [ending, 0]));
+        // A key depende do MAC. Verifique cada MAC possível uma vez, sem gerar
+        // 5.000 arquivos aleatórios e sem alterar a função de codificação.
+        for (let i = 0; i < 256; i++) {
+          const mac = prefix + i.toString(16).padStart(2, "0").toUpperCase();
+          const token = ConfigCore.encodeSnToken(mac).hex.toUpperCase();
+          const ending = ALLOWED_TOKEN_ENDINGS.find(value => token.endsWith(value));
+          if (ending) {
+            perEnding[ending]++;
+            if (!history.macs.has(mac)) candidates.push({ mac, ending });
           }
-          status.textContent = `${attempts.toLocaleString("pt-BR")} tentativas; ${this.filteredResults.length} configs encontradas.`;
-          await new Promise(resolve => setTimeout(resolve, 0));
         }
-        status.textContent = `${this.filterStopRequested ? "Busca interrompida" : "Busca concluída"}: ${attempts.toLocaleString("pt-BR")} tentativas, ${this.filteredResults.length} configs encontradas. ${this.filteredResults.length ? "Baixe cada uma pelo botão correspondente." : "Nenhum dos 8 finais apareceu. Tente novamente se desejar."}`;
+        // Embaralha a ordem sem repetir MACs já utilizados.
+        for (let i = candidates.length - 1; i > 0; i--) {
+          const random = new Uint32Array(1);
+          crypto.getRandomValues(random);
+          const j = random[0] % (i + 1);
+          [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+        }
+        status.textContent = `8 finais possíveis; ${candidates.length} MACs compatíveis ainda disponíveis. Preparando configurações...`;
+        for (const candidate of candidates) {
+          if (this.filterStopRequested) break;
+          checked++;
+          const userId = randomUniqueUser(history);
+          const folder = `CONFIG_FILTRO_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
+          let config;
+          for (let attempt = 0; attempt < 100; attempt++) {
+            config = ConfigCore.generateConfig({ mac: candidate.mac, userId, folder, channelCode });
+            if (!history.devices.has(config.device_id_hex)) break;
+            config = null;
+          }
+          if (!config) continue;
+          const content = config.files[".config"];
+          const keys = extractConfigKeys(content);
+          if (!String(keys.key_sn_token_unitvfree || "").toUpperCase().endsWith(candidate.ending)) continue;
+          const filename = randomConfigFilename();
+          storeConfigRecord(config);
+          history.macs.add(candidate.mac);
+          history.users.add(userId);
+          history.devices.add(config.device_id_hex);
+          saveHistory(history);
+          const index = this.filteredResults.push({ content, filename, ending: candidate.ending }) - 1;
+          const article = document.createElement("article");
+          article.className = "panel";
+          article.style.cssText = "padding:12px;margin:10px 0;overflow-wrap:anywhere";
+          const title = document.createElement("p");
+          title.textContent = `Config ${index + 1} — final ${candidate.ending} — ${filename}`;
+          const button = document.createElement("button");
+          button.className = "button button-outline";
+          button.textContent = "Baixar .config individual";
+          button.dataset.action = "download-filtered";
+          button.dataset.filterIndex = String(index);
+          article.append(title, button);
+          results.append(article);
+          status.textContent = `${checked} MACs compatíveis processados; ${this.filteredResults.length} configs encontradas.`;
+          if (checked % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        status.textContent = `${this.filterStopRequested ? "Busca interrompida" : "Busca concluída"}: ${checked} MACs compatíveis processados, ${this.filteredResults.length} configs encontradas. ${this.filteredResults.length ? "Baixe cada uma individualmente abaixo." : "Nenhum MAC compatível disponível no histórico atual."}`;
       } catch (error) {
-        status.textContent = `Busca encerrada após ${attempts} tentativas: ${error.message}`;
+        status.textContent = `Busca encerrada após ${checked} MACs: ${error.message}`;
         this.toast(error.message || "Erro na busca filtrada.", "error");
       } finally {
         this.filterRunning = false;
