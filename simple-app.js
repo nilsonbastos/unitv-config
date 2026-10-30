@@ -8,7 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
+const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975"];
 
 
 function extractConfigKeys(content) {
@@ -81,43 +81,27 @@ function saveHistory(history) {
 }
 
 function randomUniqueMac(history) {
-  const prefix = "9C:00:D3:EC:AA:";
-
-  if (history.macs.size >= 256) {
-    const usedPrefix = [...history.macs]
-      .filter(mac => mac.startsWith(prefix));
-
-    if (usedPrefix.length >= 256) {
-      throw new Error(
-        "Todos os 256 MACs deste prefixo já foram usados."
-      );
-    }
-  }
-
+  // Primeiro aproveita os MACs ainda livres do prefixo original.
+  const originalPrefix = "9C:00:D3:EC:AA:";
   const available = [];
-
   for (let i = 0; i < 256; i++) {
-    const mac = prefix +
-      i.toString(16).padStart(2, "0").toUpperCase();
-
-    if (!history.macs.has(mac)) {
-      available.push(mac);
-    }
+    const mac = originalPrefix + i.toString(16).padStart(2, "0").toUpperCase();
+    if (!history.macs.has(mac)) available.push(mac);
   }
-
-  if (!available.length) {
-    throw new Error("Não há MACs disponíveis.");
+  if (available.length) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    return available[random[0] % available.length];
   }
-
-  const bytes = new Uint32Array(1);
-  const limit = Math.floor(4294967296 / available.length)
-    * available.length;
-
-  do {
+  // MACs localmente administrados: evita inventar prefixos de fabricantes.
+  // O primeiro octeto 02 indica unicast/local.
+  for (let attempt = 0; attempt < 10000; attempt++) {
+    const bytes = new Uint8Array(5);
     crypto.getRandomValues(bytes);
-  } while (bytes[0] >= limit);
-
-  return available[bytes[0] % available.length];
+    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":");
+    if (!history.macs.has(mac)) return mac;
+  }
+  throw new Error("Não foi possível encontrar um MAC inédito.");
 }
 
 function randomUniqueUser(history) {
@@ -255,12 +239,12 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
+              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975. Não comprova ativação.</p>
               <div class="button-row">
-                <button class="button button-primary" data-action="generate-filtered">Procurar configs filtradas</button>
+                <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
               </div>
-              <p class="field-hint" data-filter-status aria-live="polite">Verificação direta das combinações possíveis. Os arquivos encontrados são baixados individualmente.</p>
+              <p class="field-hint" data-filter-status aria-live="polite">Consulta dos arquivos .config já salvos. Nenhum MAC ou key será recriado.</p>
               <div data-filter-results></div>
               <p class="field-hint">A configuração é montada neste navegador. Nenhum campo é enviado a um servidor.</p>
               <div class="form-divider"></div>
@@ -347,6 +331,12 @@ function randomUniqueUser(history) {
       if (action === "generate-config") {
         try {
           const history = loadHistory();
+          // Inclui os registros salvos mesmo se o índice de IDs estiver incompleto.
+          for (const record of readConfigRecords()) {
+            if (record.mac) history.macs.add(String(record.mac).trim().toUpperCase());
+            if (record.userId) history.users.add(String(record.userId));
+            if (record.deviceId) history.devices.add(String(record.deviceId));
+          }
           const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
             .map(selector => q(this, selector).value);
           const mac = randomUniqueMac(history);
@@ -422,59 +412,55 @@ function randomUniqueUser(history) {
       start.disabled = true;
       stop.disabled = false;
       results.replaceChildren();
-      let checked = 0;
       try {
         const history = loadHistory();
-        const channelCode = q(this, "#single-channel").value;
+        const saved = readConfigRecords();
         const prefix = "9C:00:D3:EC:AA:";
-        const candidates = [];
-        const perEnding = Object.fromEntries(ALLOWED_TOKEN_ENDINGS.map(ending => [ending, 0]));
-        // A key depende do MAC. Verifique cada MAC possível uma vez, sem gerar
-        // 5.000 arquivos aleatórios e sem alterar a função de codificação.
+        const eligible = [];
+        const usedEligible = new Set();
+        const endingCounts = Object.fromEntries(ALLOWED_TOKEN_ENDINGS.map(end => [end, 0]));
         for (let i = 0; i < 256; i++) {
           const mac = prefix + i.toString(16).padStart(2, "0").toUpperCase();
-          const token = ConfigCore.encodeSnToken(mac).hex.toUpperCase();
-          const ending = ALLOWED_TOKEN_ENDINGS.find(value => token.endsWith(value));
-          if (ending) {
-            perEnding[ending]++;
-            if (!history.macs.has(mac)) candidates.push({ mac, ending });
-          }
+          const ending = ConfigCore.encodeSnToken(mac).hex.slice(-4).toUpperCase();
+          if (!ALLOWED_TOKEN_ENDINGS.includes(ending)) continue;
+          endingCounts[ending]++;
+          eligible.push({ mac, ending });
+          if (history.macs.has(mac)) usedEligible.add(mac);
         }
-        // Embaralha a ordem sem repetir MACs já utilizados.
-        for (let i = candidates.length - 1; i > 0; i--) {
-          const random = new Uint32Array(1);
-          crypto.getRandomValues(random);
-          const j = random[0] % (i + 1);
-          [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+        const savedByMac = new Map();
+        for (const record of saved) {
+          const mac = String(record.mac || "").trim().toUpperCase();
+          if (!mac || typeof record.content !== "string" || !record.content) continue;
+          const keys = extractConfigKeys(record.content);
+          const token = String(keys.key_sn_token_unitvfree || "").toUpperCase();
+          const ending = ALLOWED_TOKEN_ENDINGS.find(end => token.endsWith(end));
+          if (!ending) continue;
+          if (!savedByMac.has(mac)) savedByMac.set(mac, []);
+          savedByMac.get(mac).push({ record, ending });
         }
-        status.textContent = `8 finais possíveis; ${candidates.length} MACs compatíveis ainda disponíveis. Preparando configurações...`;
-        for (const candidate of candidates) {
+        const available = eligible.filter(item => !history.macs.has(item.mac));
+        const savedMatches = eligible.flatMap(item => savedByMac.get(item.mac) || []);
+        const legacyOnly = eligible.filter(item => history.macs.has(item.mac) && !savedByMac.has(item.mac));
+        const summary = document.createElement("p");
+        summary.className = "field-hint";
+        summary.textContent = `${eligible.length} MACs compatíveis · ${usedEligible.size} já usados · ${available.length} disponíveis · ${savedMatches.length} arquivos .config recuperáveis · ${legacyOnly.length} MACs usados sem arquivo salvo.`;
+        results.append(summary);
+        const details = document.createElement("details");
+        const heading = document.createElement("summary");
+        heading.textContent = "Quantidade por final da key";
+        const values = document.createElement("p");
+        values.textContent = ALLOWED_TOKEN_ENDINGS.map(end => `${end}: ${endingCounts[end]}`).join(" · ");
+        details.append(heading, values);
+        results.append(details);
+        for (const {record, ending} of savedMatches) {
           if (this.filterStopRequested) break;
-          checked++;
-          const userId = randomUniqueUser(history);
-          const folder = `CONFIG_FILTRO_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`;
-          let config;
-          for (let attempt = 0; attempt < 100; attempt++) {
-            config = ConfigCore.generateConfig({ mac: candidate.mac, userId, folder, channelCode });
-            if (!history.devices.has(config.device_id_hex)) break;
-            config = null;
-          }
-          if (!config) continue;
-          const content = config.files[".config"];
-          const keys = extractConfigKeys(content);
-          if (!String(keys.key_sn_token_unitvfree || "").toUpperCase().endsWith(candidate.ending)) continue;
-          const filename = randomConfigFilename();
-          storeConfigRecord(config);
-          history.macs.add(candidate.mac);
-          history.users.add(userId);
-          history.devices.add(config.device_id_hex);
-          saveHistory(history);
-          const index = this.filteredResults.push({ content, filename, ending: candidate.ending }) - 1;
+          const filename = record.filename || randomConfigFilename();
+          const index = this.filteredResults.push({ content: record.content, filename, ending }) - 1;
           const article = document.createElement("article");
           article.className = "panel";
           article.style.cssText = "padding:12px;margin:10px 0;overflow-wrap:anywhere";
           const title = document.createElement("p");
-          title.textContent = `Config ${index + 1} — final ${candidate.ending} — ${filename}`;
+          title.textContent = `Salva — MAC ${record.mac} — final ${ending} — ${filename}`;
           const button = document.createElement("button");
           button.className = "button button-outline";
           button.textContent = "Baixar .config individual";
@@ -482,13 +468,22 @@ function randomUniqueUser(history) {
           button.dataset.filterIndex = String(index);
           article.append(title, button);
           results.append(article);
-          status.textContent = `${checked} MACs compatíveis processados; ${this.filteredResults.length} configs encontradas.`;
-          if (checked % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }
-        status.textContent = `${this.filterStopRequested ? "Busca interrompida" : "Busca concluída"}: ${checked} MACs compatíveis processados, ${this.filteredResults.length} configs encontradas. ${this.filteredResults.length ? "Baixe cada uma individualmente abaixo." : "Nenhum MAC compatível disponível no histórico atual."}`;
+        if (legacyOnly.length) {
+          const warning = document.createElement("p");
+          warning.className = "field-hint";
+          warning.textContent = `${legacyOnly.length} MACs compatíveis constam como usados, mas não possuem arquivo .config salvo neste navegador. Não é possível recuperar o arquivo original somente pelo histórico de MACs.`;
+          results.append(warning);
+        }
+        if (!savedMatches.length) {
+          const notice = document.createElement("p");
+          notice.textContent = "Nenhum arquivo .config compatível está armazenado neste navegador. O histórico de identificadores, sozinho, não contém os arquivos originais.";
+          results.append(notice);
+        }
+        status.textContent = `${this.filterStopRequested ? "Consulta interrompida" : "Consulta concluída"}: ${savedMatches.length} arquivos salvos encontrados; ${available.length} MACs compatíveis ainda disponíveis. Nenhum identificador foi alterado.`;
       } catch (error) {
-        status.textContent = `Busca encerrada após ${checked} MACs: ${error.message}`;
-        this.toast(error.message || "Erro na busca filtrada.", "error");
+        status.textContent = `Falha na consulta: ${error.message}`;
+        this.toast(error.message || "Erro ao consultar histórico.", "error");
       } finally {
         this.filterRunning = false;
         start.disabled = false;
