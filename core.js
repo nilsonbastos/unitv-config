@@ -55,9 +55,9 @@
     return bytes;
   }
 
-  // Algoritmo próprio v2: identificador experimental com prefixo fixo.
+  // Algoritmo próprio: identificador experimental sem prefixo fixo.
   // NÃO é um token de autenticação do UniTV Free.
-  // Considera D3:88:DC:XX e inclui os quatro bytes no resultado.
+  // Considera D3:EC:AB:XX e inclui os quatro bytes no resultado.
   function encodeSnToken(mac) {
     const clean = String(mac).trim().toUpperCase();
     if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(clean)) {
@@ -91,18 +91,9 @@
       ? chosen
       : allowedEndings[tail[3] % allowedEndings.length];
     const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
-    // Modo experimental: reproduz somente o prefixo de formato observado.
-    // O prefixo tem 23 dígitos hexadecimais; acrescentamos um nibble para
-    // completar o último byte ASCII, sem modificar os 23 dígitos fixos.
-    const fixedHexPrefix = "546e47536258744973477";
-    const completedPrefix = fixedHexPrefix + "1";
-    const prefixText = Array.from(hexToBytes(completedPrefix), byte => String.fromCharCode(byte)).join("");
-    const original = bytesToBase64(bytes);
-    const base64 = prefixText + original.slice(prefixText.length, -2) + endingChars;
+    // Sem prefixo fixo: usa a saída original do algoritmo próprio.
+    const base64 = bytesToBase64(bytes).slice(0, -2) + endingChars;
     const hex = asciiToHex(base64);
-    if (!hex.startsWith(fixedHexPrefix) || !allowedEndings.includes(hex.slice(-4).toUpperCase())) {
-      throw new Error("Falha na montagem do identificador experimental.");
-    }
     return { hex, base64 };
   }
 
@@ -193,7 +184,7 @@
   }
 
   function generateConfig(options = {}) {
-    const mac = String(options.mac || "9C:00:D3:EC:AA:01").trim().toUpperCase();
+    const mac = String(options.mac || "9C:00:D3:EC:AB:02").trim().toUpperCase();
     if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) {
       throw new Error("MAC inválido. Use o formato 00:11:22:AA:BB:CC.");
     }
