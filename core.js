@@ -55,9 +55,9 @@
     return bytes;
   }
 
-  // Algoritmo próprio: identificador experimental sem prefixo fixo.
+  // Algoritmo próprio v1: identificador determinístico de 24 bytes.
   // NÃO é um token de autenticação do UniTV Free.
-  // Considera D3:EC:AB:XX e inclui os quatro bytes no resultado.
+  // Considera D3:88:DC:XX e inclui os quatro bytes no resultado.
   function encodeSnToken(mac) {
     const clean = String(mac).trim().toUpperCase();
     if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(clean)) {
@@ -91,10 +91,8 @@
       ? chosen
       : allowedEndings[tail[3] % allowedEndings.length];
     const endingChars = String.fromCharCode(parseInt(ending.slice(0, 2), 16), parseInt(ending.slice(2), 16));
-    // Sem prefixo fixo: usa a saída original do algoritmo próprio.
     const base64 = bytesToBase64(bytes).slice(0, -2) + endingChars;
-    const hex = asciiToHex(base64);
-    return { hex, base64 };
+    return { hex: asciiToHex(base64), base64 };
   }
 
   function generateDeviceId() {
@@ -184,7 +182,7 @@
   }
 
   function generateConfig(options = {}) {
-    const mac = String(options.mac || "9C:00:D3:EC:AB:02").trim().toUpperCase();
+    const mac = String(options.mac || "9C:00:D3:A5:AB:00").trim().toUpperCase();
     if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) {
       throw new Error("MAC inválido. Use o formato 00:11:22:AA:BB:CC.");
     }
