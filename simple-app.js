@@ -298,32 +298,14 @@
               </div>
               <div class="button-row"><button class="button button-primary" data-action="generate-config">Gerar config</button></div>
               <p class="field-hint">O final escolhido é verificado antes de salvar. Cada novo MAC e Device ID é único no histórico deste navegador, mas o token completo pode se repetir.</p>
-              <section aria-label="Keys da configuração" style="margin-top:18px;padding:16px;border:1px solid #35435b;border-radius:12px;min-width:0">
-                <h3 style="margin:0 0 8px;font-size:1.08rem">Keys da configuração gerada</h3>
-                <p class="field-hint" data-keys-status style="margin:0 0 14px">Clique em Gerar config para visualizar as keys.</p>
-                <div class="field" style="margin-bottom:14px;min-width:0">
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                    <label for="key-display-n-bt">key_n_bt</label>
-                    <button type="button" class="button button-outline" data-copy-key="key_n_bt" disabled>Copiar</button>
-                  </div>
-                  <textarea id="key-display-n-bt" rows="3" readonly aria-label="Valor da key_n_bt" spellcheck="false" placeholder="Aguardando geração..." style="display:block;box-sizing:border-box;width:100%;min-width:0;padding:12px;border:1px solid #3b4964;border-radius:8px;background:#192236;color:#f4f6ff;font:13px/1.5 monospace;overflow-wrap:anywhere;resize:vertical"></textarea>
+              <section aria-label="Final de key_sn_token_unitvfree" style="margin-top:18px;padding:18px;border:1px solid #35435b;border-radius:12px;min-width:0">
+                <h3 style="margin:0 0 10px;font-size:1.08rem">key_sn_token_unitvfree</h3>
+                <p class="field-hint" style="margin:0 0 12px">Somente os 4 caracteres finais da key:</p>
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                  <strong data-key-ending-display aria-live="polite" style="display:inline-block;padding:12px 20px;border:1px solid #746cf4;border-radius:10px;background:#192236;color:#d5d0ff;font:700 1.6rem monospace;letter-spacing:0.13em">----</strong>
+                  <button class="button button-outline" type="button" data-action="copy-token-ending" disabled>Copiar key completa</button>
                 </div>
-                <div class="field" style="margin-bottom:14px;min-width:0">
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                    <label for="key-display-device">key_device_id_unitvfree</label>
-                    <button type="button" class="button button-outline" data-copy-key="key_device_id_unitvfree" disabled>Copiar</button>
-                  </div>
-                  <textarea id="key-display-device" rows="3" readonly aria-label="Valor da key_device_id_unitvfree" spellcheck="false" placeholder="Aguardando geração..." style="display:block;box-sizing:border-box;width:100%;min-width:0;padding:12px;border:1px solid #3b4964;border-radius:8px;background:#192236;color:#f4f6ff;font:13px/1.5 monospace;overflow-wrap:anywhere;resize:vertical"></textarea>
-                </div>
-                <div class="field" style="min-width:0">
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-                    <label for="key-display-token">key_sn_token_unitvfree</label>
-                    <button type="button" class="button button-outline" data-copy-key="key_sn_token_unitvfree" disabled>Copiar</button>
-                  </div>
-                  <textarea id="key-display-token" rows="3" readonly aria-label="Valor da key_sn_token_unitvfree" spellcheck="false" placeholder="Aguardando geração..." style="display:block;box-sizing:border-box;width:100%;min-width:0;padding:12px;border:1px solid #3b4964;border-radius:8px;background:#192236;color:#f4f6ff;font:13px/1.5 monospace;overflow-wrap:anywhere;resize:vertical"></textarea>
-                  <p style="margin:10px 0 0">Final da key: <strong data-key-ending-display style="display:inline-block;padding:5px 10px;border:1px solid #746cf4;border-radius:6px;color:#c9c4ff;font:700 1rem monospace">----</strong></p>
-                </div>
-                <p class="field-hint" style="margin:12px 0 0">Não compartilhe essas keys publicamente. Os valores aparecem somente após gerar a configuração.</p>
+                <p class="field-hint" data-keys-status style="margin-top:10px">Clique em Gerar config para mostrar o final.</p>
               </section>
               <div class="form-divider"></div>
               <div class="button-row">
@@ -407,52 +389,18 @@
       qa(this, ".preview-tab").forEach(button => button.setAttribute("aria-selected", String(button.dataset.file === this.currentFile)));
     }
     updateKeyFields(content) {
-      // Exibe exclusivamente as keys pertencentes ao .config aceito pelo gerador.
-      const keys = content ? extractConfigKeys(content) : {};
-      const fields = {
-        key_n_bt: "#key-display-n-bt",
-        key_device_id_unitvfree: "#key-display-device",
-        key_sn_token_unitvfree: "#key-display-token"
-      };
-      for (const [name, selector] of Object.entries(fields)) {
-        q(this, selector).value = keys[name] || "";
-        q(this, `[data-copy-key="${name}"]`).disabled = !keys[name];
-      }
-      q(this, "[data-key-ending-display]").textContent =
-        keys.key_sn_token_unitvfree ? tokenEnding(content) : "----";
+      // Mostra apenas os quatro caracteres finais na tela.
+      // O botao Copiar pega a key COMPLETA do .config aceito, sem truncamento.
+      // O .config e o historico tambem permanecem completos.
+      const ending = content ? tokenEnding(content) : "";
+      const valid = /^[0-9A-F]{4}$/.test(ending);
+      q(this, "[data-key-ending-display]").textContent = valid ? ending : "----";
+      q(this, "[data-action='copy-token-ending']").disabled = !valid;
       q(this, "[data-keys-status]").textContent = content
-        ? "Keys geradas e registradas neste navegador."
-        : "Clique em Gerar config para visualizar as keys.";
-    }
-    async copyKey(keyName) {
-      const fields = {
-        key_n_bt: "#key-display-n-bt",
-        key_device_id_unitvfree: "#key-display-device",
-        key_sn_token_unitvfree: "#key-display-token"
-      };
-      if (!Object.prototype.hasOwnProperty.call(fields, keyName)) return;
-      const value = q(this, fields[keyName]).value;
-      if (!value) return this.toast("Gere uma configuração antes de copiar.", "error");
-      try {
-        if (!navigator.clipboard?.writeText) throw new Error("Clipboard indisponível");
-        await navigator.clipboard.writeText(value);
-      } catch (_) {
-        const field = document.createElement("textarea");
-        field.value = value;
-        field.setAttribute("readonly", "");
-        field.style.position = "fixed";
-        field.style.left = "-9999px";
-        document.body.append(field);
-        field.select();
-        let copied = false;
-        try { copied = document.execCommand("copy"); } finally { field.remove(); }
-        if (!copied) return this.toast("Não foi possível copiar. Selecione a key no campo.", "error");
-      }
-      this.toast(`${keyName} copiada.`);
+        ? "Final correspondente à configuração gerada."
+        : "Clique em Gerar config para mostrar o final.";
     }
     onClick(event) {
-      const copyKeyButton = event.target.closest("[data-copy-key]");
-      if (copyKeyButton) { this.copyKey(copyKeyButton.dataset.copyKey); return; }
       const fileTab = event.target.closest("[data-file]");
       if (fileTab) { this.currentFile = fileTab.dataset.file; this.updatePreview(); return; }
       const action = event.target.closest("[data-action]")?.dataset.action;
@@ -503,6 +451,7 @@
         }
         return;
       }
+      if (action === "copy-token-ending") this.copyTokenEnding();
       if (action === "copy") this.copyCurrent();
       if (action === "download-current") this.downloadCurrent();
       if (action === "download-config") this.downloadConfig();
@@ -511,6 +460,36 @@
       if (action === "install-selected-config") this.installSelectedConfig();
       if (action === "install-generated-config") this.installGeneratedConfig();
       if (action === "delete-android-config") this.deleteAndroidConfig();
+    }
+    async copyTokenEnding() {
+      // Nunca copie apenas os 4 caracteres exibidos: o valor copiado deve
+      // ser a chave completa de key_sn_token_unitvfree do arquivo .config.
+      let fullToken = "";
+      try {
+        const config = this.currentConfig();
+        fullToken = String(extractConfigKeys(config.files[".config"]).key_sn_token_unitvfree || "").trim();
+        if (!/^[0-9a-f]+$/i.test(fullToken) || fullToken.length < 4) {
+          throw new Error("A chave completa não foi encontrada na configuração.");
+        }
+        try {
+          await navigator.clipboard.writeText(fullToken);
+        } catch (_) {
+          const field = document.createElement("textarea");
+          field.value = fullToken;
+          field.setAttribute("readonly", "");
+          field.style.position = "fixed";
+          field.style.opacity = "0";
+          document.body.append(field);
+          field.select();
+          if (!document.execCommand("copy")) {
+            throw new Error("Não foi possível copiar para a área de transferência.");
+          }
+          field.remove();
+        }
+        this.toast(`Key completa copiada (final ${fullToken.slice(-4).toUpperCase()}).`);
+      } catch (error) {
+        this.toast(error.message || "Não foi possível copiar a key.", "error");
+      }
     }
     async deleteAndroidConfig() {
       try {
