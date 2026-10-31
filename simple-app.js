@@ -1,4 +1,4 @@
-9(function () {
+(function () {
   "use strict";
   const q = (root, selector) => root.querySelector(selector);
   const qa = (root, selector) => Array.from(root.querySelectorAll(selector));
