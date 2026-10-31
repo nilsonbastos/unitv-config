@@ -498,7 +498,7 @@
         <section class="section-head"><div><p class="eyebrow">PACOTES LOCAIS</p><h2>Aplicativos</h2><p>APKs disponíveis na pasta de recursos ao lado desta versão.</p></div></section>
         <div class="apk-grid">
           <article class="apk-item"><div><span class="apk-type">Versão recomendada</span><h3>UniTV Free 5.9.0</h3></div><p>Versão mais recente listada no repositório local.</p><a class="button button-primary" href="apps/UniTV%20Free%205.9.0.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.8.0</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.8.0.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.7.2</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/V5.7.2/uvFree_5.7.2.apk" download>Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Versão legada</span><h3>UniTV Free 5.1.0</h3></div><p>Pacote antigo disponível no diretório de aplicativos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.1.0.apk" download>Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="apps/ativadorUniTVFree.apk" download>Baixar APK</a></article>
         </div>
