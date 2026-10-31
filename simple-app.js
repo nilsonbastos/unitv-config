@@ -134,6 +134,110 @@
     document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
+  // A pagina web nao tem acesso direto ao armazenamento interno Android.
+  // Um APK atualizado pode oferecer a integracao nativa AndroidFiles.installConfigToAndroid.
+  function validateConfigContent(content) {
+    if (typeof content !== "string" || !content.trim()) {
+      throw new Error("Selecione um arquivo .config com conteudo.");
+    }
+    if (new TextEncoder().encode(content).length > 1024 * 1024) {
+      throw new Error("O arquivo .config excede o limite de 1 MB.");
+    }
+    const keys = extractConfigKeys(content);
+    const required = ["key_n_bt", "key_device_id_unitvfree", "key_sn_token_unitvfree"];
+    if (required.some(name => !keys[name])) {
+      throw new Error("Arquivo invalido: nao foram encontradas as tres keys obrigatorias.");
+    }
+    return content;
+  }
+
+  async function installConfigInAndroid(content, notify) {
+    validateConfigContent(content);
+    if (!window.confirm("Copiar esta configuracao para /storage/emulated/0/Android/.config? Se ja existir, a configuracao antiga sera substituida e o nome final sera somente .config. A operacao exige confirmacao e acesso a pasta Android.")) {
+      return;
+    }
+
+    // APK WebView: requer a nova ponte implementada em MainActivity.kt.
+    if (window.AndroidFiles && typeof window.AndroidFiles.installConfigToAndroid === "function") {
+      const blob = new Blob([content], { type: "application/octet-stream" });
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Nao foi possivel ler a configuracao."));
+        reader.readAsDataURL(blob);
+      });
+      const base64 = String(dataUrl).split(",")[1];
+      if (!base64) throw new Error("Erro ao preparar a configuracao para o Android.");
+      window.AndroidFiles.installConfigToAndroid(base64);
+      notify("Solicitacao enviada ao APK; confirme a operacao e a pasta Android. Aguarde a mensagem de resultado.");
+      return;
+    }
+
+    // Navegadores com File System Access: o usuario precisa escolher a pasta Android.
+    if (typeof window.showDirectoryPicker === "function") {
+      let handle;
+      try {
+        handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          notify("Selecao da pasta cancelada.", "error");
+          return;
+        }
+        throw error;
+      }
+      if (handle.name !== "Android") {
+        throw new Error("Selecione especificamente a pasta Android do armazenamento interno.");
+      }
+      const file = await handle.getFileHandle(".config", { create: true });
+      const writable = await file.createWritable();
+      await writable.write(content);
+      await writable.close();
+      notify("Arquivo .config gravado na pasta Android selecionada.");
+      return;
+    }
+
+    // Chrome no Android normalmente nao permite escrever em /storage/emulated/0/Android.
+    if (window.confirm("Este navegador nao consegue gravar diretamente na pasta Android. Deseja baixar o arquivo com o nome exato .config para copiar manualmente?")) {
+      downloadBlob(new Blob([content], { type: "application/octet-stream" }), ".config");
+      notify("Arquivo .config baixado. Copie-o para a pasta Android; mantenha o nome exatamente .config.");
+    } else {
+      notify("Instalacao cancelada: use o APK atualizado para escolher a pasta Android.", "error");
+    }
+  }
+
+  // Apaga exclusivamente o arquivo Android/.config, mediante confirmacao do usuario.
+  async function deleteConfigInAndroid(notify) {
+    if (!window.confirm("Excluir o arquivo /storage/emulated/0/Android/.config? Essa ação apaga a configuração atual.")) return;
+    if (!window.confirm("Confirma a exclusão do .config atual? Se necessário, faça um backup antes.")) return;
+
+    if (window.AndroidFiles && typeof window.AndroidFiles.deleteConfigFromAndroid === "function") {
+      window.AndroidFiles.deleteConfigFromAndroid();
+      notify("Solicitação enviada ao APK. Aguarde a confirmação de exclusão.");
+      return;
+    }
+
+    if (typeof window.showDirectoryPicker === "function") {
+      let handle;
+      try {
+        handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      } catch (error) {
+        if (error?.name === "AbortError") return notify("Seleção de pasta cancelada.", "error");
+        throw error;
+      }
+      if (handle.name !== "Android") throw new Error("Escolha a pasta Android do armazenamento interno.");
+      try {
+        await handle.removeEntry(".config");
+        notify("Arquivo .config removido da pasta Android selecionada.");
+      } catch (error) {
+        if (error?.name === "NotFoundError") notify("A pasta Android selecionada não contém um arquivo .config.", "error");
+        else throw error;
+      }
+      return;
+    }
+
+    throw new Error("Este navegador não permite excluir arquivos na pasta Android. Abra o APK atualizado para usar essa função.");
+  }
+
   function zipEntries(config) {
     const folder = ConfigCore.sanitizeFolder(config.folder_name || "CONFIG");
     const entries = Object.entries(config.files || {})
@@ -194,11 +298,52 @@
               </div>
               <div class="button-row"><button class="button button-primary" data-action="generate-config">Gerar config</button></div>
               <p class="field-hint">O final escolhido é verificado antes de salvar. Cada novo MAC e Device ID é único no histórico deste navegador, mas o token completo pode se repetir.</p>
+              <section aria-label="Keys da configuração" style="margin-top:18px;padding:16px;border:1px solid #35435b;border-radius:12px;min-width:0">
+                <h3 style="margin:0 0 8px;font-size:1.08rem">Keys da configuração gerada</h3>
+                <p class="field-hint" data-keys-status style="margin:0 0 14px">Clique em Gerar config para visualizar as keys.</p>
+                <div class="field" style="margin-bottom:14px;min-width:0">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+                    <label for="key-display-n-bt">key_n_bt</label>
+                    <button type="button" class="button button-outline" data-copy-key="key_n_bt" disabled>Copiar</button>
+                  </div>
+                  <textarea id="key-display-n-bt" rows="3" readonly aria-label="Valor da key_n_bt" spellcheck="false" placeholder="Aguardando geração..." style="display:block;box-sizing:border-box;width:100%;min-width:0;padding:12px;border:1px solid #3b4964;border-radius:8px;background:#192236;color:#f4f6ff;font:13px/1.5 monospace;overflow-wrap:anywhere;resize:vertical"></textarea>
+                </div>
+                <div class="field" style="margin-bottom:14px;min-width:0">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+                    <label for="key-display-device">key_device_id_unitvfree</label>
+                    <button type="button" class="button button-outline" data-copy-key="key_device_id_unitvfree" disabled>Copiar</button>
+                  </div>
+                  <textarea id="key-display-device" rows="3" readonly aria-label="Valor da key_device_id_unitvfree" spellcheck="false" placeholder="Aguardando geração..." style="display:block;box-sizing:border-box;width:100%;min-width:0;padding:12px;border:1px solid #3b4964;border-radius:8px;background:#192236;color:#f4f6ff;font:13px/1.5 monospace;overflow-wrap:anywhere;resize:vertical"></textarea>
+                </div>
+                <div class="field" style="min-width:0">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+                    <label for="key-display-token">key_sn_token_unitvfree</label>
+                    <button type="button" class="button button-outline" data-copy-key="key_sn_token_unitvfree" disabled>Copiar</button>
+                  </div>
+                  <textarea id="key-display-token" rows="3" readonly aria-label="Valor da key_sn_token_unitvfree" spellcheck="false" placeholder="Aguardando geração..." style="display:block;box-sizing:border-box;width:100%;min-width:0;padding:12px;border:1px solid #3b4964;border-radius:8px;background:#192236;color:#f4f6ff;font:13px/1.5 monospace;overflow-wrap:anywhere;resize:vertical"></textarea>
+                  <p style="margin:10px 0 0">Final da key: <strong data-key-ending-display style="display:inline-block;padding:5px 10px;border:1px solid #746cf4;border-radius:6px;color:#c9c4ff;font:700 1rem monospace">----</strong></p>
+                </div>
+                <p class="field-hint" style="margin:12px 0 0">Não compartilhe essas keys publicamente. Os valores aparecem somente após gerar a configuração.</p>
+              </section>
               <div class="form-divider"></div>
               <div class="button-row">
                 <button class="button button-primary" data-action="save-folder">Salvar arquivos</button>
                 <button class="button button-outline" data-action="download-config">Baixar .config</button>
               </div>
+              <section class="panel" style="margin-top:18px;padding:16px;min-width:0" aria-label="Copiar configuracao para Android">
+                <h3 style="margin:0 0 10px;font-size:1.08rem">Copiar .config para a pasta Android</h3>
+                <p class="field-hint">Destino: <code>/storage/emulated/0/Android/.config</code>. Escolha um arquivo do celular ou use a configuracao gerada acima.</p>
+                <div class="field" style="margin:12px 0">
+                  <label for="android-config-file">Escolher arquivo .config do celular</label>
+                  <input id="android-config-file" type="file" accept=".config,application/octet-stream,text/plain" style="display:block;width:100%;min-width:0">
+                </div>
+                <div class="button-row" style="display:flex;flex-wrap:wrap;gap:10px">
+                  <button class="button button-primary" type="button" data-action="install-selected-config">Excluir antigo e instalar .config escolhido</button>
+                  <button class="button button-outline" type="button" data-action="install-generated-config">Excluir antigo e instalar .config gerado</button>
+                  <button class="button button-outline" type="button" data-action="delete-android-config">Excluir .config atual</button>
+                </div>
+                <p class="field-hint" style="margin-top:12px">O botão Substituir remove a configuração anterior e grava a nova após autorização. O botão Excluir remove apenas Android/.config, sem apagar o histórico do gerador. Em APK atualizado, escolha a pasta Android se o sistema solicitar. No Chrome, o acesso direto pode ser bloqueado.</p>
+              </section>
             </div>
           </section>
           <section class="panel preview-panel" aria-label="Pré-visualização dos arquivos">
@@ -230,14 +375,16 @@
 
       this.addEventListener("click", event => this.onClick(event));
       this.addEventListener("input", event => {
-        if (event.target.matches("input")) {
+        if (event.target.matches("#single-mac, #single-user, #single-device, #single-folder, #single-channel, #single-token-ending")) {
           this.acceptedConfig = null;
           this.acceptedEndings = null;
           this.files = {};
           this.updatePreview();
+          this.updateKeyFields("");
         }
       });
       this.updatePreview();
+      this.updateKeyFields("");
     }
     makeConfig() {
       const deviceLabel = q(this, "#single-device").value.trim();
@@ -259,7 +406,53 @@
       q(this, "[data-preview-size]").textContent = `${new TextEncoder().encode(content).length.toLocaleString("pt-BR")} bytes`;
       qa(this, ".preview-tab").forEach(button => button.setAttribute("aria-selected", String(button.dataset.file === this.currentFile)));
     }
+    updateKeyFields(content) {
+      // Exibe exclusivamente as keys pertencentes ao .config aceito pelo gerador.
+      const keys = content ? extractConfigKeys(content) : {};
+      const fields = {
+        key_n_bt: "#key-display-n-bt",
+        key_device_id_unitvfree: "#key-display-device",
+        key_sn_token_unitvfree: "#key-display-token"
+      };
+      for (const [name, selector] of Object.entries(fields)) {
+        q(this, selector).value = keys[name] || "";
+        q(this, `[data-copy-key="${name}"]`).disabled = !keys[name];
+      }
+      q(this, "[data-key-ending-display]").textContent =
+        keys.key_sn_token_unitvfree ? tokenEnding(content) : "----";
+      q(this, "[data-keys-status]").textContent = content
+        ? "Keys geradas e registradas neste navegador."
+        : "Clique em Gerar config para visualizar as keys.";
+    }
+    async copyKey(keyName) {
+      const fields = {
+        key_n_bt: "#key-display-n-bt",
+        key_device_id_unitvfree: "#key-display-device",
+        key_sn_token_unitvfree: "#key-display-token"
+      };
+      if (!Object.prototype.hasOwnProperty.call(fields, keyName)) return;
+      const value = q(this, fields[keyName]).value;
+      if (!value) return this.toast("Gere uma configuração antes de copiar.", "error");
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard indisponível");
+        await navigator.clipboard.writeText(value);
+      } catch (_) {
+        const field = document.createElement("textarea");
+        field.value = value;
+        field.setAttribute("readonly", "");
+        field.style.position = "fixed";
+        field.style.left = "-9999px";
+        document.body.append(field);
+        field.select();
+        let copied = false;
+        try { copied = document.execCommand("copy"); } finally { field.remove(); }
+        if (!copied) return this.toast("Não foi possível copiar. Selecione a key no campo.", "error");
+      }
+      this.toast(`${keyName} copiada.`);
+    }
     onClick(event) {
+      const copyKeyButton = event.target.closest("[data-copy-key]");
+      if (copyKeyButton) { this.copyKey(copyKeyButton.dataset.copyKey); return; }
       const fileTab = event.target.closest("[data-file]");
       if (fileTab) { this.currentFile = fileTab.dataset.file; this.updatePreview(); return; }
       const action = event.target.closest("[data-action]")?.dataset.action;
@@ -303,6 +496,7 @@
           this.files = config.files;
           q(this, "#single-device").value = ConfigCore.decodeHex(config.device_id_hex).text;
           this.updatePreview();
+          this.updateKeyFields(config.files[".config"]);
           this.toast(`Config com final ${tokenEnding(config.files[".config"])} gerada e registrada.`);
         } catch (error) {
           this.toast(error.message || "Erro ao gerar configuração.", "error");
@@ -314,6 +508,37 @@
       if (action === "download-config") this.downloadConfig();
       if (action === "download-zip") this.downloadZip();
       if (action === "save-folder") this.saveFolder();
+      if (action === "install-selected-config") this.installSelectedConfig();
+      if (action === "install-generated-config") this.installGeneratedConfig();
+      if (action === "delete-android-config") this.deleteAndroidConfig();
+    }
+    async deleteAndroidConfig() {
+      try {
+        await deleteConfigInAndroid((msg, tone) => this.toast(msg, tone));
+      } catch (error) {
+        this.toast(`Falha ao excluir: ${error.message}`, "error");
+      }
+    }
+    async installSelectedConfig() {
+      try {
+        const file = q(this, "#android-config-file").files?.[0];
+        if (!file) throw new Error("Toque em Escolher arquivo e selecione um .config.");
+        if (!file.name.toLowerCase().endsWith(".config")) {
+          throw new Error("Escolha um arquivo cujo nome termine em .config.");
+        }
+        if (file.size > 1024 * 1024) throw new Error("O arquivo .config deve ter ate 1 MB.");
+        await installConfigInAndroid(await file.text(), (msg, tone) => this.toast(msg, tone));
+      } catch (error) {
+        this.toast(`Falha ao copiar: ${error.message}`, "error");
+      }
+    }
+    async installGeneratedConfig() {
+      try {
+        const config = this.currentConfig();
+        await installConfigInAndroid(config.files[".config"], (msg, tone) => this.toast(msg, tone));
+      } catch (error) {
+        this.toast(`Falha ao copiar: ${error.message}`, "error");
+      }
     }
     currentConfig() {
       if (!this.acceptedConfig || !matchesEndings(this.acceptedConfig, this.acceptedEndings || [])) throw new Error("Clique em Gerar config para criar uma key com o final solicitado.");
@@ -424,6 +649,18 @@
           } catch (error) { this.toast(`Falha ao excluir histórico: ${error.message}`, "error"); }
           return;
         }
+        const installButton = event.target.closest("[data-history-install]");
+        if (installButton) {
+          try {
+            const record = readConfigRecords().find(r => r.id === installButton.dataset.historyInstall);
+            if (!record) throw new Error("Registro nao encontrado.");
+            installConfigInAndroid(record.content, (msg, tone) => this.toast(msg, tone))
+              .catch(error => this.toast(`Falha ao copiar: ${error.message}`, "error"));
+          } catch (error) {
+            this.toast(`Falha ao copiar: ${error.message}`, "error");
+          }
+          return;
+        }
         const button = event.target.closest("[data-history-download]");
         if (!button) return;
         try {
@@ -489,6 +726,7 @@
             <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_sn_token_unitvfree || "Não encontrada")}</code></p>
           </details>
           <button class="button button-outline" style="margin-top:12px" data-history-download="${escapeHtml(r.id)}">Baixar .config novamente</button>
+          <button class="button button-primary" type="button" style="margin-top:12px" data-history-install="${escapeHtml(r.id)}">Instalar este .config na pasta Android</button>
         </article>`).join("") : "<p>Nenhuma configuração encontrada.</p>";
     }
   }
@@ -536,6 +774,11 @@
         </main><div class="toast" role="status" aria-live="polite"></div>`;
       this.addEventListener("click", event => this.onNavigation(event));
       this.addEventListener("studio-toast", event => this.showToast(event.detail));
+      // Aviso real de sucesso/erro informado pelo codigo Android nativo.
+      window.addEventListener("android-config-install-result", event => {
+        const detail = event.detail || {};
+        this.showToast({ message: detail.message || "Operacao concluida no Android.", tone: detail.success ? "success" : "error" });
+      });
     }
     onNavigation(event) {
       const button = event.target.closest("[data-view]");
