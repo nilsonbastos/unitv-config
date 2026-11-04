@@ -8,7 +8,7 @@
 const HISTORY_KEY = "unitv_config_used_ids_v1";
 
 const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
+const ALLOWED_TOKEN_ENDINGS = ["2B78", "6E38", "4134", "4536", "4855", "5732", "6930", "7161", "7453"];
 
 
 function extractConfigKeys(content) {
@@ -20,6 +20,12 @@ function extractConfigKeys(content) {
   return keys;
 }
 
+
+function isAllowedConfigRecord(record) {
+  if (!record || typeof record.content !== "string" || !record.content) return false;
+  const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
+  return ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending));
+}
 
 function readConfigRecords() {
   try {
@@ -80,28 +86,35 @@ function saveHistory(history) {
   }));
 }
 
-function randomUniqueMac(history) {
-  // Primeiro aproveita os MACs ainda livres do prefixo original.
-  const originalPrefix = "9C:00:D3:EC:AA:";
-  const available = [];
+function randomUniqueMac(history, usedTokens) {
+  // O token depende somente do último byte do MAC neste ConfigCore.
+  // Escolhe apenas bytes que ainda não geraram tokens registrados.
+  const eligible = [];
   for (let i = 0; i < 256; i++) {
-    const mac = originalPrefix + i.toString(16).padStart(2, "0").toUpperCase();
-    if (!history.macs.has(mac)) available.push(mac);
+    const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
+    const candidate = "9C:00:D3:EC:AA:" + lastByte;
+    const token = ConfigCore.encodeSnToken(candidate).hex.toUpperCase();
+    if (!usedTokens.has(token)) eligible.push({lastByte, token});
   }
-  if (available.length) {
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
-    return available[random[0] % available.length];
+  if (!eligible.length) {
+    throw new Error("Não há tokens inéditos disponíveis neste algoritmo (máximo de 256). Nenhum registro foi apagado.");
   }
-  // MACs localmente administrados: evita inventar prefixos de fabricantes.
-  // O primeiro octeto 02 indica unicast/local.
+  // Prioriza os finais permitidos que o algoritmo consegue produzir.
+  const allowed = eligible.filter(item => ALLOWED_TOKEN_ENDINGS.some(end => item.token.endsWith(end)));
+  const pool = allowed.length ? allowed : eligible;
+  const random = new Uint32Array(1);
+  crypto.getRandomValues(random);
+  const chosen = pool[random[0] % pool.length];
+  const originalMac = "9C:00:D3:EC:AA:" + chosen.lastByte;
+  if (!history.macs.has(originalMac)) return originalMac;
+  // O prefixo novo só evita MAC repetido; não cria novos tokens.
   for (let attempt = 0; attempt < 10000; attempt++) {
-    const bytes = new Uint8Array(5);
+    const bytes = new Uint8Array(4);
     crypto.getRandomValues(bytes);
-    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":");
+    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":") + ":" + chosen.lastByte;
     if (!history.macs.has(mac)) return mac;
   }
-  throw new Error("Não foi possível encontrar um MAC inédito.");
+  throw new Error("Não foi possível encontrar MAC inédito para o token selecionado.");
 }
 
 function randomUniqueUser(history) {
@@ -239,7 +252,7 @@ function randomUniqueUser(history) {
               </div>
               <div class="form-divider"></div>
               <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
+              <p class="field-hint">Prioriza os finais configurados que o algoritmo atual consegue gerar. Impede tokens repetidos no histórico. Não comprova ativação.</p>
               <div class="button-row">
                 <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
                 <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
@@ -337,9 +350,19 @@ function randomUniqueUser(history) {
             if (record.userId) history.users.add(String(record.userId));
             if (record.deviceId) history.devices.add(String(record.deviceId));
           }
+          const usedTokens = new Set();
+          for (const record of readConfigRecords()) {
+            const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
+            if (token) usedTokens.add(token);
+          }
+          // Inclui os MACs antigos mesmo quando o .config não está mais armazenado.
+          for (const oldMac of history.macs) {
+            try { usedTokens.add(ConfigCore.encodeSnToken(oldMac).hex.toUpperCase()); }
+            catch (_) { /* Ignora MAC legado inválido. */ }
+          }
           const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
             .map(selector => q(this, selector).value);
-          const mac = randomUniqueMac(history);
+          const mac = randomUniqueMac(history, usedTokens);
           const userId = randomUniqueUser(history);
           let config = null;
           try {
@@ -354,6 +377,9 @@ function randomUniqueUser(history) {
               config = null;
             }
             if (!config) throw new Error("Não foi possível gerar Device ID inédito.");
+            if (usedTokens.has(config.sn_token_hex.toUpperCase())) {
+              throw new Error("Token repetido detectado. A configuração não foi salva.");
+            }
             history.macs.add(mac);
             history.users.add(userId);
             history.devices.add(config.device_id_hex);
@@ -439,7 +465,7 @@ function randomUniqueUser(history) {
           savedByMac.get(mac).push({ record, ending });
         }
         const available = eligible.filter(item => !history.macs.has(item.mac));
-        const savedMatches = eligible.flatMap(item => savedByMac.get(item.mac) || []);
+        const savedMatches = Array.from(savedByMac.values()).flat();
         const legacyOnly = eligible.filter(item => history.macs.has(item.mac) && !savedByMac.has(item.mac));
         const summary = document.createElement("p");
         summary.className = "field-hint";
@@ -563,32 +589,105 @@ function randomUniqueUser(history) {
             <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
           </div>
           <div class="button-row" style="margin:12px 0">
-            <button class="button button-primary" data-action="export-history" type="button">Exportar Histórico</button>
+            <button class="button button-outline" data-action="import-config" type="button">Importar .config</button>
+            <input data-import-files type="file" accept=".config,text/plain" multiple hidden>
+            <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
+            <button class="button button-outline" data-action="clear-history" type="button" style="border-color:#b91c1c;color:#b91c1c">Limpar Histórico</button>
           </div>
-          <p class="field-hint">Salva um backup JSON com os registros, arquivos .config e identificadores já utilizados. Guarde em local privado.</p>
+          <p class="field-hint">Exibe e exporta somente .config cujo key_sn_token_unitvfree termina em: ${ALLOWED_TOKEN_ENDINGS.join(", ")}. O histórico completo continua armazenado; não altera registros.</p>
           <p data-history-count></p>
           <div data-history-results></div>
         </section>`;
       this.querySelector("#history-search").addEventListener("input", () => this.render());
+      this.querySelector('[data-import-files]').addEventListener('change', async event => {
+        const files = [...event.target.files];
+        event.target.value = '';
+        if (!files.length) return;
+        try {
+          const current = readConfigRecords();
+          const history = loadHistory();
+          const knownTokens = new Set(current.map(r => String(extractConfigKeys(r.content).key_sn_token_unitvfree || '').toUpperCase()));
+          const knownContents = new Set(current.map(r => r.content));
+          const additions = [];
+          let skipped = 0, invalid = 0, outsideFilter = 0;
+          for (const file of files) {
+            if (!/\.config$/i.test(file.name) || file.size > 1024 * 1024) { invalid++; continue; }
+            const content = await file.text();
+            const keys = extractConfigKeys(content);
+            if (!keys.key_n_bt || !keys.key_device_id_unitvfree || !keys.key_sn_token_unitvfree ||
+                ![keys.key_n_bt, keys.key_device_id_unitvfree, keys.key_sn_token_unitvfree].every(v => /^[0-9a-f]+$/i.test(v) && v.length % 2 === 0)) {
+              invalid++; continue;
+            }
+            const token = keys.key_sn_token_unitvfree.toUpperCase();
+            if (knownTokens.has(token) || knownContents.has(content)) { skipped++; continue; }
+            const record = {
+              id: crypto.randomUUID(), createdAt: new Date().toISOString(),
+              mac: '', userId: '', deviceId: keys.key_device_id_unitvfree,
+              filename: file.name.replace(/[^a-z0-9_.-]/gi, '_'), content, keys
+            };
+            additions.push(record);
+            knownTokens.add(token);
+            knownContents.add(content);
+            history.devices.add(record.deviceId);
+            if (!isAllowedConfigRecord(record)) outsideFilter++;
+          }
+          if (additions.length) {
+            const oldRecords = localStorage.getItem(CONFIG_RECORDS_KEY);
+            try {
+              localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify([...current, ...additions]));
+              saveHistory(history);
+            } catch (error) {
+              if (oldRecords === null) localStorage.removeItem(CONFIG_RECORDS_KEY);
+              else localStorage.setItem(CONFIG_RECORDS_KEY, oldRecords);
+              throw error;
+            }
+          }
+          this.render();
+          this.toast(`${additions.length} importadas · ${skipped} duplicadas · ${invalid} inválidas${outsideFilter ? ` · ${outsideFilter} fora dos 9 finais (salvas, mas ocultas)` : ''}.`);
+        } catch (error) {
+          this.toast(`Falha ao importar: ${error.message}`, 'error');
+        }
+      });
       this.addEventListener("click", event => {
+        if (event.target.closest('[data-action="import-config"]')) {
+          this.querySelector('[data-import-files]').click();
+          return;
+        }
+        if (event.target.closest('[data-action="clear-history"]')) {
+          const count = readConfigRecords().length;
+          if (!window.confirm(`ATENÇÃO: Apagar ${count} configurações salvas e todos os MACs, User IDs e Device IDs usados neste navegador? Esta ação não pode ser desfeita. Faça backup antes de continuar.`)) return;
+          if (!window.confirm("Confirma a exclusão DEFINITIVA do Histórico de Keys?")) return;
+          try {
+            localStorage.removeItem(CONFIG_RECORDS_KEY);
+            localStorage.removeItem(HISTORY_KEY);
+            this.querySelector("#history-search").value = "";
+            this.render();
+            this.toast("Histórico de Keys apagado deste navegador.");
+          } catch (error) {
+            this.toast(`Falha ao limpar histórico: ${error.message}`, "error");
+          }
+          return;
+        }
         if (event.target.closest('[data-action="export-history"]')) {
           try {
-            const records = readConfigRecords();
-            const history = loadHistory();
-            const backup = {
-              format: "unitv-config-history-backup",
-              version: 1,
-              exportedAt: new Date().toISOString(),
-              records,
-              usedIds: {
-                macs: [...history.macs],
-                users: [...history.users],
-                devices: [...history.devices]
-              }
-            };
-            const filename = `HISTORICO_KEYS_${new Date().toISOString().slice(0, 10)}.json`;
-            downloadBlob(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json;charset=utf-8" }), filename);
-            this.toast(`Backup preparado: ${records.length} configurações e identificadores utilizados.`);
+            const records = readConfigRecords().filter(isAllowedConfigRecord);
+            if (!records.length) {
+              this.toast("Nenhuma configuração filtrada salva neste navegador.", "error");
+              return;
+            }
+            // Cada registro salvo vira um arquivo .config individual no ZIP.
+            // Nomes sequenciais evitam colisões e não expõem keys no nome.
+            const entries = records.map((record, index) => {
+              const ending = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "")
+                .trim().toUpperCase().slice(-4);
+              return {
+                name: `CONFIG_${String(index + 1).padStart(4, "0")}_FINAL_${ending}.config`,
+                content: record.content
+              };
+            });
+            const filename = `CONFIGS_FILTRADAS_${new Date().toISOString().slice(0, 10)}.zip`;
+            downloadBlob(ConfigCore.createZip(entries), filename);
+            this.toast(`${records.length} arquivos .config individuais exportados em ZIP.`);
           } catch (error) {
             this.toast(`Falha ao exportar histórico: ${error.message}`, "error");
           }
@@ -612,21 +711,25 @@ function randomUniqueUser(history) {
         return;
       }
       const search = q(this, "#history-search").value.trim().toLowerCase();
-      const matches = records.filter(r => [r.mac, r.userId, r.deviceId,
-        ...Object.values(r.keys || {})].some(v => String(v || "").toLowerCase().includes(search)));
-      q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
-      q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
+      const filtered = records.filter(isAllowedConfigRecord);
+      const matches = filtered.filter(r => [r.mac, r.userId, r.deviceId,
+        ...Object.values(extractConfigKeys(r.content))].some(v => String(v || "").toLowerCase().includes(search)));
+      q(this, "[data-history-count]").textContent = `${matches.length} de ${filtered.length} configurações filtradas (${records.length} no histórico total)`;
+      q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => {
+        const keys = extractConfigKeys(r.content);
+        return `
         <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
           <p><strong>${escapeHtml(new Date(r.createdAt).toLocaleString("pt-BR"))}</strong></p>
           <p><strong>MAC:</strong> ${escapeHtml(r.mac)} | <strong>User ID:</strong> ${escapeHtml(r.userId)}</p>
           <p><strong>Device ID:</strong> ${escapeHtml(r.deviceId)}</p>
           <details><summary>Mostrar keys</summary>
-            <p><strong>key_n_bt</strong><br><code>${escapeHtml(r.keys?.key_n_bt || "Não encontrada")}</code></p>
-            <p><strong>key_device_id_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_device_id_unitvfree || "Não encontrada")}</code></p>
-            <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_sn_token_unitvfree || "Não encontrada")}</code></p>
+            <p><strong>key_n_bt</strong><br><code>${escapeHtml(keys.key_n_bt || "Não encontrada")}</code></p>
+            <p><strong>key_device_id_unitvfree</strong><br><code>${escapeHtml(keys.key_device_id_unitvfree || "Não encontrada")}</code></p>
+            <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(keys.key_sn_token_unitvfree || "Não encontrada")}</code></p>
           </details>
           <button class="button button-outline" style="margin-top:12px" data-history-download="${escapeHtml(r.id)}">Baixar .config novamente</button>
-        </article>`).join("") : "<p>Nenhuma configuração encontrada.</p>";
+        </article>`;
+      }).join("") : "<p>Nenhuma configuração encontrada com os finais escolhidos.</p>";
     }
   }
 
@@ -637,7 +740,7 @@ function randomUniqueUser(history) {
         <div class="apk-grid">
           <article class="apk-item"><div><span class="apk-type">Versão recomendada</span><h3>UniTV Free 5.9.0</h3></div><p>Versão mais recente listada no repositório local.</p><a class="button button-primary" href="apps/UniTV%20Free%205.9.0.apk" download>Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.8.0</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.8.0.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Versão legada</span><h3>UniTV Free 5.1.0</h3></div><p>Pacote antigo disponível no diretório de aplicativos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.1.0.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Aplicativo Ativa</span><h3>Ativa.apk</h3></div><p>Baixe o aplicativo Ativa pelo GitHub Releases.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/v1.0/ativa.apk">Baixar APK</a></article>
           <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="apps/ativadorUniTVFree.apk" download>Baixar APK</a></article>
         </div>
         <section class="manual-guide" aria-labelledby="manual-guide-title">
