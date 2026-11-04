@@ -107,14 +107,7 @@ function randomUniqueMac(history, usedTokens) {
   const chosen = pool[random[0] % pool.length];
   const originalMac = "9C:00:D3:EC:AA:" + chosen.lastByte;
   if (!history.macs.has(originalMac)) return originalMac;
-  // O prefixo novo só evita MAC repetido; não cria novos tokens.
-  for (let attempt = 0; attempt < 10000; attempt++) {
-    const bytes = new Uint8Array(4);
-    crypto.getRandomValues(bytes);
-    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":") + ":" + chosen.lastByte;
-    if (!history.macs.has(mac)) return mac;
-  }
-  throw new Error("Não foi possível encontrar MAC inédito para o token selecionado.");
+  throw new Error("Todos os MACs com prefixo fixo e tokens disponíveis já foram utilizados.");
 }
 
 function randomUniqueUser(history) {
