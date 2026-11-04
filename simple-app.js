@@ -5,9 +5,9 @@
   const HISTORY_KEY = "unitv_config_used_ids_v1";
   const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
   const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536"];
-  // Os tres primeiros bytes permanecem fixos; os dois seguintes variam.
-  // O ultimo byte determina o final do token pelo algoritmo do core.js.
-  const MAC_OUI_PREFIX = "9C:00:D3:";
+  // Apenas o ultimo byte do MAC varia (XX): 9C:00:D3:EC:AA:XX.
+  // O core.js utiliza esse byte para determinar o final do token.
+  const MAC_OUI_PREFIX = "9C:00:D3:EC:AA:";
   let endingMapCache = null;
 
   function extractConfigKeys(content) {
@@ -26,7 +26,7 @@
     const map = new Map();
     for (let i = 0; i < 256; i++) {
       const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
-      const tokenHex = ConfigCore.encodeSnToken(`${MAC_OUI_PREFIX}EC:AA:${lastByte}`).hex.toUpperCase();
+      const tokenHex = ConfigCore.encodeSnToken(`${MAC_OUI_PREFIX}${lastByte}`).hex.toUpperCase();
       const ending = tokenHex.slice(-4);
       if (!map.has(ending)) map.set(ending, []);
       map.get(ending).push(lastByte);
@@ -98,18 +98,21 @@
   }
   function randomUniqueMacFiltered(history, desiredEndings) {
     const map = supportedEndingMap();
-    const matchingBytes = desiredEndings.flatMap(ending => map.get(ending) || []);
-    if (!matchingBytes.length) throw new Error("Nenhum MAC pode produzir o final solicitado.");
-    const byteHex = number => number.toString(16).padStart(2, "0").toUpperCase();
-    // Os dois bytes intermediários variam para aumentar as combinações disponíveis.
-    for (let attempt = 0; attempt < 2000; attempt++) {
-      const fourth = byteHex(secureIndex(256));
-      const fifth = byteHex(secureIndex(256));
-      const last = matchingBytes[secureIndex(matchingBytes.length)];
-      const mac = `${MAC_OUI_PREFIX}${fourth}:${fifth}:${last}`;
-      if (!history.macs.has(mac)) return mac;
+    const matchingBytes = [...new Set(desiredEndings.flatMap(ending => map.get(ending) || []))];
+    if (!matchingBytes.length) {
+      throw new Error("Nenhum MAC com o prefixo fixo produz o final solicitado.");
     }
-    throw new Error("Não foi encontrado um MAC novo com esse final após várias tentativas.");
+
+    // Com prefixo fixo, ha no maximo 256 MACs. Filtra primeiro todos os
+    // ja utilizados, para evitar tentativas repetidas ou gerar duplicatas.
+    const available = matchingBytes
+      .map(lastByte => `${MAC_OUI_PREFIX}${lastByte}`)
+      .filter(mac => !history.macs.has(mac));
+    if (!available.length) {
+      throw new Error("Todos os MACs disponíveis para esse final já foram usados. " +
+        "Com prefixo fixo, apenas os dois últimos caracteres podem mudar.");
+    }
+    return available[secureIndex(available.length)];
   }
   function randomUniqueUser(history) {
     for (let i = 0; i < 1000; i++) {
