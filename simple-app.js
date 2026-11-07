@@ -548,33 +548,14 @@ function randomUniqueUser(history) {
     downloadConfig() {
       try {
         const config = this.currentConfig();
-        const conteudo = config.files[".config"];
-
-        if (!conteudo) {
-          throw new Error("Arquivo .config vazio.");
-        }
-
-        // Dentro do APK Android, instala na pasta Android/.config.
-        if (
-          window.AndroidFiles &&
-          typeof window.AndroidFiles.installConfigToAndroid === "function"
-        ) {
-          const base64 = btoa(unescape(encodeURIComponent(conteudo)));
-          window.AndroidFiles.installConfigToAndroid(base64);
-          return;
-        }
-
-        // Navegador comum: mantém o download tradicional.
-        downloadBlob(
-          new Blob([conteudo], { type: "application/octet-stream" }),
-          randomConfigFilename()
-        );
-
+        if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
+        downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
         this.toast("Arquivo .config enviado para download.");
       } catch (error) {
         this.toast(`Falha no download: ${error.message}`, "error");
       }
     }
+
     downloadZip() {
       try {
         const config = this.currentConfig();
@@ -800,12 +781,6 @@ function randomUniqueUser(history) {
             </button>
           </div>
 
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-            <button type="button" class="button button-outline" data-import-clear>
-              Limpar arquivos importados
-            </button>
-          </div>
-
           <div data-import-results></div>
 
           <div style="margin-top:18px">
@@ -838,9 +813,6 @@ function randomUniqueUser(history) {
 
       this.querySelector("[data-import-install]")
         .addEventListener("click", () => this.installSelected());
-
-      this.querySelector("[data-import-clear]")
-        .addEventListener("click", () => this.clearImported());
     }
 
     async readFiles() {
@@ -911,67 +883,12 @@ function randomUniqueUser(history) {
         card.appendChild(name);
 
         const detail = document.createElement("p");
-        detail.style.marginBottom = "10px";
+        detail.style.marginBottom = "0";
         detail.textContent = item.valid
           ? "Arquivo lido e validado."
           : "Erro: " + item.error;
 
         card.appendChild(detail);
-
-        if (item.valid) {
-          const details = document.createElement("details");
-          details.style.marginTop = "10px";
-
-          const summary = document.createElement("summary");
-          summary.textContent = "Ver conteúdo completo do arquivo";
-          summary.style.cursor = "pointer";
-          summary.style.fontWeight = "bold";
-          details.appendChild(summary);
-
-          const cabecalho = document.createElement("p");
-          cabecalho.textContent =
-            "Arquivo: " + item.name +
-            " | Cabeçalho, data e demais dados abaixo:";
-          cabecalho.style.marginTop = "10px";
-          details.appendChild(cabecalho);
-
-          const conteudo = document.createElement("pre");
-          conteudo.textContent = item.content;
-          conteudo.style.cssText =
-            "white-space:pre-wrap;overflow-wrap:anywhere;" +
-            "word-break:break-word;padding:12px;" +
-            "border:1px solid #888;border-radius:6px;" +
-            "max-height:400px;overflow:auto;font-size:12px;" +
-            "user-select:text";
-
-          details.appendChild(conteudo);
-
-          const copiar = document.createElement("button");
-          copiar.type = "button";
-          copiar.className = "button button-outline";
-          copiar.textContent = "Copiar conteúdo completo";
-          copiar.style.marginTop = "8px";
-
-          copiar.addEventListener("click", async () => {
-            try {
-              await navigator.clipboard.writeText(item.content);
-              copiar.textContent = "Conteúdo copiado!";
-            } catch (error) {
-              conteudo.focus();
-              const selecao = document.createRange();
-              selecao.selectNodeContents(conteudo);
-              const selecionador = window.getSelection();
-              selecionador.removeAllRanges();
-              selecionador.addRange(selecao);
-              copiar.textContent =
-                "Selecione o texto e copie manualmente";
-            }
-          });
-
-          details.appendChild(copiar);
-          card.appendChild(details);
-        }
-
         results.appendChild(card);
 
         if (item.valid) {
@@ -1000,50 +917,25 @@ function randomUniqueUser(history) {
         return;
       }
 
+      if (typeof installConfigInAndroid !== "function") {
+        status.textContent =
+          "A função de instalação Android não foi encontrada no aplicativo.";
+        return;
+      }
+
       const item = this.filesData[index];
 
+      status.textContent = "Enviando configuração para instalação...";
+
       try {
-        if (typeof downloadBlob !== "function") {
-          throw new Error("A função de download não foi encontrada.");
-        }
-
-        status.textContent = "Preparando download de " + item.name + "...";
-
-        downloadBlob(
-          new Blob([item.content], {
-            type: "application/octet-stream"
-          }),
-          item.name
-        );
-
-        status.textContent =
-          "Download solicitado: " + item.name +
-          ". Verifique a pasta padrão de downloads.";
+        await installConfigInAndroid(item.content, (message) => {
+          status.textContent = String(message);
+        });
       } catch (error) {
         status.textContent =
-          "Falha no download: " +
+          "Não foi possível instalar: " +
           (error?.message || String(error));
       }
-    }
-
-    clearImported() {
-      this.filesData = [];
-
-      const input = this.querySelector("#import-config-files");
-      const results = this.querySelector("[data-import-results]");
-      const select = this.querySelector("#import-config-select");
-      const status = this.querySelector("[data-import-status]");
-
-      input.value = "";
-      results.replaceChildren();
-      select.replaceChildren();
-
-      const option = document.createElement("option");
-      option.value = "";
-      option.textContent = "Selecione um arquivo válido";
-      select.appendChild(option);
-
-      status.textContent = "Arquivos importados removidos da tela.";
     }
   }
   class StudioApp extends HTMLElement {
