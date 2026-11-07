@@ -548,14 +548,33 @@ function randomUniqueUser(history) {
     downloadConfig() {
       try {
         const config = this.currentConfig();
-        if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
-        downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
+        const conteudo = config.files[".config"];
+
+        if (!conteudo) {
+          throw new Error("Arquivo .config vazio.");
+        }
+
+        // Dentro do APK Android, instala na pasta Android/.config.
+        if (
+          window.AndroidFiles &&
+          typeof window.AndroidFiles.installConfigToAndroid === "function"
+        ) {
+          const base64 = btoa(unescape(encodeURIComponent(conteudo)));
+          window.AndroidFiles.installConfigToAndroid(base64);
+          return;
+        }
+
+        // Navegador comum: mantém o download tradicional.
+        downloadBlob(
+          new Blob([conteudo], { type: "application/octet-stream" }),
+          randomConfigFilename()
+        );
+
         this.toast("Arquivo .config enviado para download.");
       } catch (error) {
         this.toast(`Falha no download: ${error.message}`, "error");
       }
     }
-
     downloadZip() {
       try {
         const config = this.currentConfig();
