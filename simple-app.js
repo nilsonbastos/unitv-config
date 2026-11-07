@@ -755,189 +755,6 @@ function randomUniqueUser(history) {
     }
   }
 
-  class ImportConfigsView extends ViewElement {
-    connectedCallback() {
-      this.filesData = [];
-
-      this.innerHTML = `
-        <section class="panel panel-pad" style="padding:20px">
-          <h2>Importar Configs</h2>
-          <p>Selecione arquivos .config para validar e instalar.</p>
-
-          <div style="margin:18px 0">
-            <label for="import-config-files">Arquivos .config</label>
-            <input
-              id="import-config-files"
-              type="file"
-              accept=".config,text/plain,application/octet-stream"
-              multiple
-              style="display:block;width:100%;margin-top:10px"
-            >
-          </div>
-
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin:15px 0">
-            <button type="button" class="button button-primary" data-import-validate>
-              Validar arquivos
-            </button>
-          </div>
-
-          <div data-import-results></div>
-
-          <div style="margin-top:18px">
-            <label for="import-config-select">Configuração para instalar</label>
-            <select id="import-config-select" style="display:block;width:100%;margin-top:8px">
-              <option value="">Selecione um arquivo válido</option>
-            </select>
-          </div>
-
-          <button
-            type="button"
-            class="button button-primary"
-            data-import-install
-            style="margin-top:14px"
-          >
-            Instalar configuração selecionada
-          </button>
-
-          <p data-import-status role="status" aria-live="polite" style="margin-top:16px">
-            Nenhum arquivo selecionado.
-          </p>
-        </section>
-      `;
-
-      this.querySelector("#import-config-files")
-        .addEventListener("change", () => this.readFiles());
-
-      this.querySelector("[data-import-validate]")
-        .addEventListener("click", () => this.readFiles());
-
-      this.querySelector("[data-import-install]")
-        .addEventListener("click", () => this.installSelected());
-    }
-
-    async readFiles() {
-      const input = this.querySelector("#import-config-files");
-      const results = this.querySelector("[data-import-results]");
-      const select = this.querySelector("#import-config-select");
-      const status = this.querySelector("[data-import-status]");
-      const files = Array.from(input.files || []);
-
-      this.filesData = [];
-      results.replaceChildren();
-      select.replaceChildren();
-
-      const initialOption = document.createElement("option");
-      initialOption.value = "";
-      initialOption.textContent = "Selecione um arquivo válido";
-      select.appendChild(initialOption);
-
-      if (!files.length) {
-        status.textContent = "Selecione pelo menos um arquivo .config.";
-        return;
-      }
-
-      for (const file of files) {
-        const item = {
-          name: file.name,
-          valid: false,
-          content: "",
-          error: ""
-        };
-
-        try {
-          if (!file.name.toLowerCase().endsWith(".config")) {
-            throw new Error("Extensão inválida; selecione um arquivo .config.");
-          }
-
-          if (file.size > 1024 * 1024) {
-            throw new Error("O arquivo ultrapassa o limite de 1 MB.");
-          }
-
-          const original = await file.text();
-
-          if (!original.trim()) {
-            throw new Error("O arquivo está vazio.");
-          }
-
-          if (typeof validateConfigContent === "function") {
-            item.content = validateConfigContent(original);
-          } else {
-            item.content = original;
-          }
-
-          if (typeof item.content !== "string" || !item.content.trim()) {
-            throw new Error("O conteúdo do arquivo não é válido.");
-          }
-
-          item.valid = true;
-        } catch (error) {
-          item.error = error?.message || "Falha ao validar o arquivo.";
-        }
-
-        const card = document.createElement("div");
-        card.style.cssText =
-          "padding:12px;margin-top:10px;border:1px solid #888;border-radius:8px";
-
-        const name = document.createElement("strong");
-        name.textContent = item.name;
-        card.appendChild(name);
-
-        const detail = document.createElement("p");
-        detail.style.marginBottom = "0";
-        detail.textContent = item.valid
-          ? "Arquivo lido e validado."
-          : "Erro: " + item.error;
-
-        card.appendChild(detail);
-        results.appendChild(card);
-
-        if (item.valid) {
-          const index = this.filesData.length;
-          this.filesData.push(item);
-
-          const option = document.createElement("option");
-          option.value = String(index);
-          option.textContent = item.name;
-          select.appendChild(option);
-        }
-      }
-
-      status.textContent =
-        this.filesData.length + " arquivo(s) válido(s) de " +
-        files.length + " selecionado(s).";
-    }
-
-    async installSelected() {
-      const select = this.querySelector("#import-config-select");
-      const status = this.querySelector("[data-import-status]");
-      const index = Number(select.value);
-
-      if (select.value === "" || !this.filesData[index]) {
-        status.textContent = "Selecione um arquivo .config válido.";
-        return;
-      }
-
-      if (typeof installConfigInAndroid !== "function") {
-        status.textContent =
-          "A função de instalação Android não foi encontrada no aplicativo.";
-        return;
-      }
-
-      const item = this.filesData[index];
-
-      status.textContent = "Enviando configuração para instalação...";
-
-      try {
-        await installConfigInAndroid(item.content, (message) => {
-          status.textContent = String(message);
-        });
-      } catch (error) {
-        status.textContent =
-          "Não foi possível instalar: " +
-          (error?.message || String(error));
-      }
-    }
-  }
   class StudioApp extends HTMLElement {
     connectedCallback() {
       this.innerHTML = `
@@ -951,12 +768,10 @@ function randomUniqueUser(history) {
             <button class="view-tab" data-view="generator" aria-selected="true">Gerador 2027</button>
             <button class="view-tab" data-view="apps" aria-selected="false">Aplicativos</button>
               <button class="view-tab" data-view="history" aria-selected="false">Histórico de Keys</button>
-            <button class="view-tab" data-view="import" aria-selected="false">Importar Configs</button>
           </nav>
           <section class="view-panel" data-panel="generator"><single-generator-view></single-generator-view></section>
           <section class="view-panel" data-panel="apps" hidden><apps-view></apps-view></section>
           <section class="view-panel" data-panel="history" hidden><history-view></history-view></section>
-          <section class="view-panel" data-panel="import" hidden><import-configs-view></import-configs-view></section>
           <footer class="footer-note">
             <span>HTML5 · CSS3 · JS Vanilla· Web Components</span>
             <nav class="footer-actions" aria-label="Links do projeto">
@@ -983,7 +798,7 @@ function randomUniqueUser(history) {
       qa(this, "[data-view]").forEach(tab => tab.setAttribute("aria-selected", String(tab === button)));
       qa(this, "[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== button.dataset.view; });
       const view = button.dataset.view;
-      q(this, "[data-page-title]").textContent = view === "apps" ? "Aplicativos" : view === "history" ? "Histórico de Keys" : view === "import" ? "Importar Configs" : "Gerador individual";
+      q(this, "[data-page-title]").textContent = view === "apps" ? "Aplicativos" : view === "history" ? "Histórico de Keys" : "Gerador individual";
       q(this, "[data-page-note]").textContent = view === "apps"
         ? "Baixe os pacotes disponíveis na pasta local de aplicativos."
         : view === "history" ? "Pesquise as configurações salvas neste navegador."
@@ -1004,6 +819,5 @@ function randomUniqueUser(history) {
   customElements.define("single-generator-view", SingleGeneratorView);
   customElements.define("apps-view", AppsView);
   customElements.define("history-view", HistoryView);
-  customElements.define("import-configs-view", ImportConfigsView);
   customElements.define("studio-app", StudioApp);
 })();
