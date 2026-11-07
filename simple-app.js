@@ -1,170 +1,196 @@
-
 (function () {
+  "use strict";
   const q = (root, selector) => root.querySelector(selector);
+  const qa = (root, selector) => Array.from(root.querySelectorAll(selector));
+  const HISTORY_KEY = "unitv_config_used_ids_v1";
+  const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
+  const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536"];
+  // Apenas o ultimo byte do MAC varia (XX): 9C:00:D3:EC:AA:XX.
+  // O core.js utiliza esse byte para determinar o final do token.
+  const MAC_OUI_PREFIX = "9C:00:D3:EC:AA:";
+  let endingMapCache = null;
 
-  const qa = (root, selector) =>
-    Array.from(root.querySelectorAll(selector));
-  
-const HISTORY_KEY = "unitv_config_used_ids_v1";
-
-const CONFIG_RECORDS_KEY = "unitv_config_records_v1";
-const ALLOWED_TOKEN_ENDINGS = ["7453", "4855", "6930", "4134", "4536", "5975", "554B", "6D77"];
-
-
-function extractConfigKeys(content) {
-  const keys = {};
-  for (const line of String(content || "").split(/\r?\n/)) {
-    const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
-    if (match) keys[match[1]] = match[2].trim();
+  function extractConfigKeys(content) {
+    const keys = {};
+    for (const line of String(content || "").split(/\r?\n/)) {
+      const match = line.match(/^\s*(key_n_bt|key_device_id_unitvfree|key_sn_token_unitvfree)\s*=(.*)$/);
+      if (match) keys[match[1]] = match[2].trim();
+    }
+    return keys;
   }
-  return keys;
-}
-
-
-function readConfigRecords() {
-  try {
-    const value = JSON.parse(localStorage.getItem(CONFIG_RECORDS_KEY) || "[]");
-    return Array.isArray(value) ? value : [];
-  } catch (error) {
-    throw new Error("Não foi possível ler o histórico de configurações.");
+  function tokenEnding(content) {
+    return String(extractConfigKeys(content).key_sn_token_unitvfree || "").trim().toUpperCase().slice(-4);
   }
-}
-
-function storeConfigRecord(config) {
-  const records = readConfigRecords();
-  const content = config.files?.[".config"];
-  if (!content) throw new Error("Configuração sem arquivo .config.");
-  const keys = extractConfigKeys(content);
-  records.push({
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-    mac: config.mac || q(document, "#single-mac")?.value || "",
-    userId: config.user_id || q(document, "#single-user")?.value || "",
-    deviceId: config.device_id_hex || "",
-    filename: randomConfigFilename(),
-    content,
-    keys
-  });
-  localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
-}
-
-function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  })[char]);
-}
-
-
-function loadHistory() {
-  try {
-    const saved = JSON.parse(
-      localStorage.getItem(HISTORY_KEY) || "{}"
-    );
-
-    return {
-      macs: new Set(saved.macs || []),
-      users: new Set(saved.users || []),
-      devices: new Set(saved.devices || [])
+  function supportedEndingMap() {
+    if (endingMapCache) return endingMapCache;
+    const map = new Map();
+    for (let i = 0; i < 256; i++) {
+      const lastByte = i.toString(16).padStart(2, "0").toUpperCase();
+      const tokenHex = ConfigCore.encodeSnToken(`${MAC_OUI_PREFIX}${lastByte}`).hex.toUpperCase();
+      const ending = tokenHex.slice(-4);
+      if (!map.has(ending)) map.set(ending, []);
+      map.get(ending).push(lastByte);
+    }
+    endingMapCache = map;
+    return map;
+  }
+  function requestedTokenEndings(raw) {
+    const desired = String(raw || "").trim().toUpperCase();
+    if (!desired) return ALLOWED_TOKEN_ENDINGS;
+    if (!/^[0-9A-F]{4}$/.test(desired)) {
+      throw new Error("Digite exatamente 4 caracteres hexadecimais (0-9 ou A-F), ou deixe em branco.");
+    }
+    if (!supportedEndingMap().has(desired)) {
+      throw new Error(`Final ${desired} não pode ser gerado pelo core.js que está carregado neste site. Escolha um destes: ${Array.from(supportedEndingMap().keys()).sort().join(", ")}.`);
+    }
+    return [desired];
+  }
+  function matchesEndings(config, endings) {
+    return endings.includes(tokenEnding(config.files?.[".config"]));
+  }
+  function configFilenameFor(content, number) {
+    const last = tokenEnding(content);
+    const ending = /^[0-9A-F]{4}$/.test(last) ? last : "SEM_FINAL";
+    return `CONFIG_${String(number).padStart(4, "0")}_FINAL_${ending}.config`;
+  }
+  function readConfigRecords() {
+    const data = JSON.parse(localStorage.getItem(CONFIG_RECORDS_KEY) || "[]");
+    if (!Array.isArray(data)) throw new Error("Histórico inválido.");
+    return data;
+  }
+  function storeConfigRecord(config, desiredEndings) {
+    if (!matchesEndings(config, desiredEndings)) throw new Error("A key não corresponde ao final solicitado. Nada foi salvo.");
+    const records = readConfigRecords();
+    const content = config.files[".config"];
+    const record = {
+      id: crypto.randomUUID(), createdAt: new Date().toISOString(),
+      mac: config.mac || "", userId: config.user_id || "", deviceId: config.device_id_hex || "",
+      filename: configFilenameFor(content, records.length + 1), content, keys: extractConfigKeys(content)
     };
-  } catch (error) {
-    console.error("Erro ao ler histórico:", error);
-    throw new Error("Não foi possível ler o histórico.");
+    records.push(record);
+    localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
+    return record;
   }
-}
-
-function saveHistory(history) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify({
-    macs: [...history.macs],
-    users: [...history.users],
-    devices: [...history.devices]
-  }));
-}
-
-function randomUniqueMac(history) {
-  // Primeiro aproveita os MACs ainda livres do prefixo original.
-  const originalPrefix = "9C:00:D3:EC:AA:";
-  const available = [];
-  for (let i = 0; i < 256; i++) {
-    const mac = originalPrefix + i.toString(16).padStart(2, "0").toUpperCase();
-    if (!history.macs.has(mac)) available.push(mac);
+  function individualConfigFilename(record) {
+    const records = readConfigRecords();
+    const position = records.findIndex(item => item.id === record.id);
+    return configFilenameFor(record.content || "", position >= 0 ? position + 1 : records.length + 1);
   }
-  if (available.length) {
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
-    return available[random[0] % available.length];
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[char]);
   }
-  // MACs localmente administrados: evita inventar prefixos de fabricantes.
-  // O primeiro octeto 02 indica unicast/local.
-  for (let attempt = 0; attempt < 10000; attempt++) {
-    const bytes = new Uint8Array(5);
-    crypto.getRandomValues(bytes);
-    const mac = "02:" + [...bytes].map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(":");
-    if (!history.macs.has(mac)) return mac;
+  function loadHistory() {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "{}");
+    return { macs: new Set(saved.macs || []), users: new Set(saved.users || []), devices: new Set(saved.devices || []) };
   }
-  throw new Error("Não foi possível encontrar um MAC inédito.");
-}
-
-function randomUniqueUser(history) {
-  for (let i = 0; i < 1000; i++) {
+  function saveHistory(history) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify({
+      macs: [...history.macs], users: [...history.users], devices: [...history.devices]
+    }));
+  }
+  function secureIndex(length) {
     const bytes = new Uint32Array(1);
-    crypto.getRandomValues(bytes);
-
-    const user = String(
-      500000000 + (bytes[0] % 100000000)
-    );
-
-    if (!history.users.has(user)) return user;
+    const limit = Math.floor(4294967296 / length) * length;
+    do { crypto.getRandomValues(bytes); } while (bytes[0] >= limit);
+    return bytes[0] % length;
   }
+  function randomUniqueMacFiltered(history, desiredEndings) {
+    const map = supportedEndingMap();
+    const matchingBytes = [...new Set(desiredEndings.flatMap(ending => map.get(ending) || []))];
+    if (!matchingBytes.length) {
+      throw new Error("Nenhum MAC com o prefixo fixo produz o final solicitado.");
+    }
 
-  throw new Error("Não foi possível gerar User ID único.");
-}
-
-
+    // Com prefixo fixo, ha no maximo 256 MACs. Filtra primeiro todos os
+    // ja utilizados, para evitar tentativas repetidas ou gerar duplicatas.
+    const available = matchingBytes
+      .map(lastByte => `${MAC_OUI_PREFIX}${lastByte}`)
+      .filter(mac => !history.macs.has(mac));
+    if (!available.length) {
+      throw new Error("Todos os MACs disponíveis para esse final já foram usados. " +
+        "Com prefixo fixo, apenas os dois últimos caracteres podem mudar.");
+    }
+    return available[secureIndex(available.length)];
+  }
+  function randomUniqueUser(history) {
+    for (let i = 0; i < 1000; i++) {
+      const bytes = new Uint32Array(1);
+      crypto.getRandomValues(bytes);
+      const user = String(500000000 + (bytes[0] % 100000000));
+      if (!history.users.has(user)) return user;
+    }
+    throw new Error("Não foi possível gerar User ID único.");
+  }
   function downloadBlob(blob, filename) {
-    // Dentro do APK Android
-    if (
-      window.AndroidFiles &&
-      typeof window.AndroidFiles.saveFile === "function"
-    ) {
+    if (window.AndroidFiles && typeof window.AndroidFiles.saveFile === "function") {
       const reader = new FileReader();
-
-      reader.onloadend = function () {
-        const base64 = reader.result.split(",")[1];
-
-        window.AndroidFiles.saveFile(
-          base64,
-          filename,
-          blob.type || "application/octet-stream"
-        );
-      };
-
-      reader.onerror = function () {
-        console.error("Erro ao preparar arquivo");
-      };
-
+      reader.onloadend = () => window.AndroidFiles.saveFile(reader.result.split(",")[1], filename, blob.type || "application/octet-stream");
+      reader.onerror = () => console.error("Erro ao preparar arquivo");
       reader.readAsDataURL(blob);
       return;
     }
-
-    // Download normal no navegador
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-
-    link.href = url;
-    link.download = filename;
-    link.style.display = "none";
-
-    document.body.append(link);
-    link.click();
-    link.remove();
-
+    link.href = url; link.download = filename; link.style.display = "none";
+    document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
+  // No Android 13/15, o seletor de pasta normalmente bloqueia /Android.
+  // Apenas a ponte nativa do APK pode TENTAR gravar ou excluir Android/.config.
+  function hasNativeConfigBridge() {
+    const api = window.AndroidFiles;
+    return !!(api && typeof api.installConfigToAndroid === "function" &&
+      typeof api.deleteConfigFromAndroid === "function");
+  }
 
-  function randomConfigFilename() {
-    const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
-    const suffix = Math.floor(1000 + Math.random() * 9000);
-    return `CONFIG_${stamp}_${suffix}.config`;
+  function validateConfigContent(content) {
+    if (typeof content !== "string" || !content.trim()) {
+      throw new Error("Selecione um arquivo .config com conteúdo.");
+    }
+    if (new TextEncoder().encode(content).length > 1024 * 1024) {
+      throw new Error("O arquivo .config excede o limite de 1 MB.");
+    }
+    const keys = extractConfigKeys(content);
+    const required = ["key_n_bt", "key_device_id_unitvfree", "key_sn_token_unitvfree"];
+    if (required.some(name => !keys[name])) {
+      throw new Error("Arquivo inválido: não foram encontradas as três keys obrigatórias.");
+    }
+    return content;
+  }
+
+  async function installConfigInAndroid(content, notify) {
+    validateConfigContent(content);
+    // Se o APK antigo estiver instalado, NÃO abrir o seletor de pasta como
+    // alternativa: o Android bloqueia a seleção de /storage/emulated/0/Android.
+    if (!hasNativeConfigBridge()) {
+      throw new Error("Integração Android indisponível. Instale o APK recompilado com MainActivity.kt V17. No Chrome, essa função não é suportada.");
+    }
+    if (!window.confirm("Substituir /storage/emulated/0/Android/.config pelo arquivo escolhido? O Android ainda pode bloquear a gravação.")) {
+      return;
+    }
+    const blob = new Blob([content], { type: "application/octet-stream" });
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Não foi possível ler a configuração."));
+      reader.readAsDataURL(blob);
+    });
+    const base64 = String(dataUrl).split(",")[1];
+    if (!base64) throw new Error("Erro ao preparar a configuração para o Android.");
+    window.AndroidFiles.installConfigToAndroid(base64);
+    notify("Solicitação enviada ao APK. Confirme na janela nativa e aguarde o resultado; ainda não foi instalado.");
+  }
+
+  async function deleteConfigInAndroid(notify) {
+    if (!hasNativeConfigBridge()) {
+      throw new Error("Integração Android indisponível. Instale o APK recompilado com MainActivity.kt V17. No Chrome, a exclusão não é suportada.");
+    }
+    if (!window.confirm("Excluir /storage/emulated/0/Android/.config? Esta ação remove a configuração atual.")) return;
+    if (!window.confirm("Confirma a exclusão? Faça um backup antes, se necessário.")) return;
+    window.AndroidFiles.deleteConfigFromAndroid();
+    notify("Solicitação de exclusão enviada ao APK. Aguarde a confirmação nativa; ainda não foi excluído.");
   }
 
   function zipEntries(config) {
@@ -172,58 +198,43 @@ function randomUniqueUser(history) {
     const entries = Object.entries(config.files || {})
       .filter(([, content]) => content !== undefined && content !== null && content !== "")
       .map(([name, content]) => ({ name: `${folder}/${name}`, content }));
-    if (config.files && config.files[".config"]) {
-      entries.push({ name: `${folder}/Android/.config`, content: config.files[".config"] });
-    }
+    if (config.files?.[".config"]) entries.push({ name: `${folder}/Android/.config`, content: config.files[".config"] });
     return entries;
   }
-
   async function saveConfig(config) {
     if (typeof window.showDirectoryPicker !== "function") {
       downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
       return "zip";
     }
-
     let root;
-    try {
-      root = await window.showDirectoryPicker({ mode: "readwrite" });
-    } catch (error) {
+    try { root = await window.showDirectoryPicker({ mode: "readwrite" }); }
+    catch (error) {
       if (error.name === "AbortError") return "cancelled";
       downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
       return "zip";
     }
-
     const folder = await root.getDirectoryHandle(ConfigCore.sanitizeFolder(config.folder_name), { create: true });
     for (const [name, content] of Object.entries(config.files)) {
       if (!content) continue;
       const handle = await folder.getFileHandle(name, { create: true });
       const writable = await handle.createWritable();
-      await writable.write(content);
-      await writable.close();
+      await writable.write(content); await writable.close();
     }
     return "folder";
   }
-
   class ViewElement extends HTMLElement {
     toast(message, tone = "success") {
-      this.dispatchEvent(new CustomEvent("studio-toast", {
-        bubbles: true,
-        detail: { message, tone }
-      }));
+      this.dispatchEvent(new CustomEvent("studio-toast", { bubbles: true, detail: { message, tone } }));
     }
   }
-
   class SingleGeneratorView extends ViewElement {
     connectedCallback() {
       this.files = {};
       this.currentFile = ".config";
-      this.filteredResults = [];
-      this.filterRunning = false;
-      this.filterStopRequested = false;
+      this.acceptedConfig = null;
       this.innerHTML = `
         <div class="generator-layout">
           <section class="panel panel-pad">
-            
             <div class="form-stack" style="margin-top:16px">
               <div class="field-grid">
                 <div class="field"><label for="single-mac">Endereço MAC</label><input id="single-mac" value="9C:00:D3:EC:AB:AA" spellcheck="false" autocomplete="off"></div>
@@ -234,27 +245,48 @@ function randomUniqueUser(history) {
                 <div class="field"><label for="single-folder">Nome da pasta</label><input id="single-folder" value="CONFIG_1"></div>
                 <div class="field"><label for="single-channel">Código do canal</label><input id="single-channel" value="SBTHD"></div>
               </div>
-              <div class="button-row">
-                <button class="button button-primary" data-action="generate-config">Gerar config</button>
+              <div class="field" style="margin:12px 0">
+                <label for="single-token-ending">Escolher os 4 caracteres finais da key (opcional)</label>
+                <input id="single-token-ending" maxlength="4" placeholder="Ex.: 4134 (vazio = automático)" list="token-ending-suggestions" spellcheck="false" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
+                <datalist id="token-ending-suggestions"></datalist>
+                <p class="field-hint" data-ending-hint>Carregando finais permitidos...</p>
               </div>
-              <div class="form-divider"></div>
-              <h3>Gerar configs por final da key</h3>
-              <p class="field-hint">Somente tokens <code>key_sn_token_unitvfree</code> terminados em: 7453, 4855, 6930, 4134, 4536, 5975, 554B ou 6D77. Não comprova ativação.</p>
-              <div class="button-row">
-                <button class="button button-primary" data-action="generate-filtered">Consultar configs filtradas no histórico</button>
-                <button class="button button-outline" data-action="stop-filtered" disabled>Parar busca</button>
-              </div>
-              <p class="field-hint" data-filter-status aria-live="polite">Consulta dos arquivos .config já salvos. Nenhum MAC ou key será recriado.</p>
-              <div data-filter-results></div>
-              <p class="field-hint">A configuração é montada neste navegador. Nenhum campo é enviado a um servidor.</p>
+              <div class="button-row"><button class="button button-primary" data-action="generate-config">Gerar config</button></div>
+              <p class="field-hint">O final escolhido é verificado antes de salvar. Cada novo MAC e Device ID é único no histórico deste navegador, mas o token completo pode se repetir.</p>
+              <section aria-label="Final de key_sn_token_unitvfree" style="margin-top:18px;padding:18px;border:1px solid #35435b;border-radius:12px;min-width:0">
+                <h3 style="margin:0 0 10px;font-size:1.08rem">key_sn_token_unitvfree</h3>
+                <p class="field-hint" style="margin:0 0 12px">Somente os 4 caracteres finais da key:</p>
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                  <strong data-key-ending-display aria-live="polite" style="display:inline-block;padding:12px 20px;border:1px solid #746cf4;border-radius:10px;background:#192236;color:#d5d0ff;font:700 1.6rem monospace;letter-spacing:0.13em">----</strong>
+                  <button class="button button-outline" type="button" data-action="copy-token-ending" disabled>Copiar key completa</button>
+                </div>
+                <p class="field-hint" data-keys-status style="margin-top:10px">Clique em Gerar config para mostrar o final.</p>
+              </section>
               <div class="form-divider"></div>
               <div class="button-row">
                 <button class="button button-primary" data-action="save-folder">Salvar arquivos</button>
                 <button class="button button-outline" data-action="download-config">Baixar .config</button>
               </div>
+              <section class="panel" style="margin-top:18px;padding:16px;min-width:0" aria-label="Copiar configuracao para Android">
+                <h3 style="margin:0 0 10px;font-size:1.08rem">Copiar .config para a pasta Android</h3>
+                <p class="field-hint">Destino: <code>/storage/emulated/0/Android/.config</code>. Escolha um arquivo do celular ou use a configuracao gerada acima.</p>
+                <div class="field" style="margin:12px 0">
+                  <label for="android-config-file">Escolher arquivo .config do celular</label>
+                  <input id="android-config-file" type="file" accept=".config,application/octet-stream,text/plain" style="display:block;width:100%;min-width:0">
+                </div>
+                <div class="button-row" style="display:flex;flex-wrap:wrap;gap:10px">
+                  <button class="button button-primary" type="button" data-action="install-selected-config">Excluir antigo e instalar .config escolhido</button>
+                  <button class="button button-outline" type="button" data-action="install-generated-config">Excluir antigo e instalar .config gerado</button>
+                  <button class="button button-outline" type="button" data-action="delete-android-config">Excluir .config atual</button>
+                </div>
+                <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <button class="button button-outline" type="button" data-action="check-native-bridge">Verificar integração Android</button>
+                  <span class="field-hint" data-native-bridge-status role="status" aria-live="polite"></span>
+                </div>
+                <p class="field-hint" style="margin-top:12px">A substituição e a exclusão diretas só são tentadas no APK com integração Android. O site não abrirá o seletor de pastas protegido. Mesmo com a permissão de gerenciamento, o Android 13/15 pode impedir o acesso a /Android. Nunca considere instalado até receber a confirmação do APK.</p>
+              </section>
             </div>
           </section>
-
           <section class="panel preview-panel" aria-label="Pré-visualização dos arquivos">
             <div class="preview-top">
               <div class="preview-tabs" role="tablist" aria-label="Arquivo para visualizar">
@@ -272,14 +304,39 @@ function randomUniqueUser(history) {
             <div class="preview-foot"><span data-preview-name>.config</span><span data-preview-size>0 bytes</span></div>
           </section>
         </div>`;
+      // Gera as sugestões usando o core.js realmente carregado no navegador.
+      // Não apresenta finais inventados nem depende de uma lista desatualizada.
+      const availableEndings = [...supportedEndingMap().keys()].sort();
+      q(this, "#token-ending-suggestions").innerHTML = availableEndings
+        .map(ending => `<option value="${ending}"></option>`).join("");
+      q(this, "[data-ending-hint]").textContent =
+        `Deixe vazio para gerar entre ${ALLOWED_TOKEN_ENDINGS.join(", ")}. ` +
+        `Finais que este core.js realmente produz: ${availableEndings.join(", ")}. ` +
+        `Outros finais não podem ser gerados com este algoritmo.`;
 
-      this.generate();
       this.addEventListener("click", event => this.onClick(event));
       this.addEventListener("input", event => {
-        if (event.target.matches("input")) this.generate();
+        if (event.target.matches("#single-mac, #single-user, #single-device, #single-folder, #single-channel, #single-token-ending")) {
+          this.acceptedConfig = null;
+          this.acceptedEndings = null;
+          this.files = {};
+          this.updatePreview();
+          this.updateKeyFields("");
+        }
       });
+      this.updatePreview();
+      this.updateKeyFields("");
+      this.renderNativeBridgeStatus();
     }
-
+    renderNativeBridgeStatus() {
+      const status = q(this, "[data-native-bridge-status]");
+      if (!status) return;
+      const connected = hasNativeConfigBridge();
+      status.textContent = connected
+        ? "Integração detectada. O acesso à pasta ainda depende do Android."
+        : "Integração NÃO detectada. Atualize e instale o APK V17; no Chrome não funciona.";
+      status.style.color = connected ? "#8be4ac" : "#ffb7aa";
+    }
     makeConfig() {
       const deviceLabel = q(this, "#single-device").value.trim();
       const deviceId = deviceLabel
@@ -293,60 +350,42 @@ function randomUniqueUser(history) {
         deviceId
       });
     }
-
-    generate() {
-      try {
-        const config = this.makeConfig();
-        this.files = config.files;
-        if (!q(this, "#single-device").value) {
-          q(this, "#single-device").value = ConfigCore.decodeHex(config.device_id_hex).text;
-        }
-        this.updatePreview();
-        return config;
-      } catch (error) {
-        q(this, "[data-preview]").textContent = error.message;
-        q(this, "[data-preview-size]").textContent = "Entrada inválida";
-        return null;
-      }
-    }
-
     updatePreview() {
       const content = this.files[this.currentFile] || "";
       q(this, "[data-preview]").textContent = content;
       q(this, "[data-preview-name]").textContent = this.currentFile;
       q(this, "[data-preview-size]").textContent = `${new TextEncoder().encode(content).length.toLocaleString("pt-BR")} bytes`;
-      qa(this, ".preview-tab").forEach(button => {
-        button.setAttribute("aria-selected", String(button.dataset.file === this.currentFile));
-      });
+      qa(this, ".preview-tab").forEach(button => button.setAttribute("aria-selected", String(button.dataset.file === this.currentFile)));
     }
-
+    updateKeyFields(content) {
+      // Mostra apenas os quatro caracteres finais na tela.
+      // O botao Copiar pega a key COMPLETA do .config aceito, sem truncamento.
+      // O .config e o historico tambem permanecem completos.
+      const ending = content ? tokenEnding(content) : "";
+      const valid = /^[0-9A-F]{4}$/.test(ending);
+      q(this, "[data-key-ending-display]").textContent = valid ? ending : "----";
+      q(this, "[data-action='copy-token-ending']").disabled = !valid;
+      q(this, "[data-keys-status]").textContent = content
+        ? "Final correspondente à configuração gerada."
+        : "Clique em Gerar config para mostrar o final.";
+    }
     onClick(event) {
       const fileTab = event.target.closest("[data-file]");
-      if (fileTab) {
-        this.currentFile = fileTab.dataset.file;
-        this.updatePreview();
-        return;
-      }
+      if (fileTab) { this.currentFile = fileTab.dataset.file; this.updatePreview(); return; }
       const action = event.target.closest("[data-action]")?.dataset.action;
       if (action === "generate-config") {
         try {
+          const desiredEndings = requestedTokenEndings(q(this, "#single-token-ending").value);
           const history = loadHistory();
-          // Inclui os registros salvos mesmo se o índice de IDs estiver incompleto.
-          for (const record of readConfigRecords()) {
-            if (record.mac) history.macs.add(String(record.mac).trim().toUpperCase());
-            if (record.userId) history.users.add(String(record.userId));
-            if (record.deviceId) history.devices.add(String(record.deviceId));
-          }
-          const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"]
-            .map(selector => q(this, selector).value);
-          const mac = randomUniqueMac(history);
+          const mac = randomUniqueMacFiltered(history, desiredEndings);
           const userId = randomUniqueUser(history);
-          let config = null;
+          const oldValues = ["#single-mac", "#single-user", "#single-folder", "#single-device"].map(selector => q(this, selector).value);
+          let config;
           try {
             q(this, "#single-mac").value = mac;
             q(this, "#single-user").value = userId;
-            q(this, "#single-folder").value =
-              `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+            q(this, "#single-folder").value = `CONFIG_${Date.now()}_${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+            q(this, "#single-device").value = "";
             for (let attempt = 0; attempt < 100; attempt++) {
               q(this, "#single-device").value = "";
               config = this.makeConfig();
@@ -354,288 +393,282 @@ function randomUniqueUser(history) {
               config = null;
             }
             if (!config) throw new Error("Não foi possível gerar Device ID inédito.");
-            history.macs.add(mac);
-            history.users.add(userId);
-            history.devices.add(config.device_id_hex);
-            // Grava primeiro o arquivo e as keys; se o armazenamento estiver cheio,
-            // a geração não é marcada como concluída.
-            storeConfigRecord(config);
+            if (!matchesEndings(config, desiredEndings)) throw new Error("Final da key diferente do solicitado. Configuração não salva.");
+            storeConfigRecord(config, desiredEndings);
             try {
+              history.macs.add(mac); history.users.add(userId); history.devices.add(config.device_id_hex);
               saveHistory(history);
             } catch (error) {
               const records = readConfigRecords();
-              records.pop();
-              localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records));
+              const index = records.findIndex(r => r.content === config.files[".config"]);
+              if (index >= 0) { records.splice(index, 1); localStorage.setItem(CONFIG_RECORDS_KEY, JSON.stringify(records)); }
               throw error;
             }
           } catch (error) {
-            ["#single-mac", "#single-user", "#single-folder", "#single-device"]
-              .forEach((selector, index) => { q(this, selector).value = oldValues[index]; });
+            ["#single-mac", "#single-user", "#single-folder", "#single-device"].forEach((selector, i) => { q(this, selector).value = oldValues[i]; });
             throw error;
           }
+          this.acceptedConfig = config;
+          this.acceptedEndings = desiredEndings;
           this.files = config.files;
           q(this, "#single-device").value = ConfigCore.decodeHex(config.device_id_hex).text;
           this.updatePreview();
-          this.toast("Nova config gerada e registrada no histórico.");
+          this.updateKeyFields(config.files[".config"]);
+          this.toast(`Config com final ${tokenEnding(config.files[".config"])} gerada e registrada.`);
         } catch (error) {
-          console.error("Erro ao gerar configuração:", error);
           this.toast(error.message || "Erro ao gerar configuração.", "error");
         }
         return;
       }
-      if (action === "generate-filtered") { this.generateFiltered(); return; }
-      if (action === "stop-filtered") { this.filterStopRequested = true; return; }
-      if (action === "download-filtered") {
-        const index = Number(event.target.closest("[data-filter-index]")?.dataset.filterIndex);
-        const record = this.filteredResults[index];
-        if (!record) return this.toast("Arquivo não encontrado.", "error");
-        downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), record.filename);
-        this.toast("Download individual iniciado.");
-        return;
-      }
+      if (action === "copy-token-ending") this.copyTokenEnding();
       if (action === "copy") this.copyCurrent();
       if (action === "download-current") this.downloadCurrent();
       if (action === "download-config") this.downloadConfig();
       if (action === "download-zip") this.downloadZip();
       if (action === "save-folder") this.saveFolder();
+      if (action === "check-native-bridge") {
+        this.renderNativeBridgeStatus();
+        this.toast(hasNativeConfigBridge()
+          ? "Ponte do APK encontrada; a permissão ainda será verificada pelo Android."
+          : "Ponte do APK indisponível. Instale a versão compilada com MainActivity V17.",
+          hasNativeConfigBridge() ? "success" : "error");
+      }
+      if (action === "install-selected-config") this.installSelectedConfig();
+      if (action === "install-generated-config") this.installGeneratedConfig();
+      if (action === "delete-android-config") this.deleteAndroidConfig();
     }
-
-    async generateFiltered() {
-      if (this.filterRunning) return;
-      this.filterRunning = true;
-      this.filterStopRequested = false;
-      this.filteredResults = [];
-      const status = q(this, "[data-filter-status]");
-      const results = q(this, "[data-filter-results]");
-      const start = q(this, '[data-action="generate-filtered"]');
-      const stop = q(this, '[data-action="stop-filtered"]');
-      start.disabled = true;
-      stop.disabled = false;
-      results.replaceChildren();
+    async copyTokenEnding() {
+      // Nunca copie apenas os 4 caracteres exibidos: o valor copiado deve
+      // ser a chave completa de key_sn_token_unitvfree do arquivo .config.
+      let fullToken = "";
       try {
-        const history = loadHistory();
-        const saved = readConfigRecords();
-        const prefix = "9C:00:D3:EC:AA:";
-        const eligible = [];
-        const usedEligible = new Set();
-        const endingCounts = Object.fromEntries(ALLOWED_TOKEN_ENDINGS.map(end => [end, 0]));
-        for (let i = 0; i < 256; i++) {
-          const mac = prefix + i.toString(16).padStart(2, "0").toUpperCase();
-          const ending = ConfigCore.encodeSnToken(mac).hex.slice(-4).toUpperCase();
-          if (!ALLOWED_TOKEN_ENDINGS.includes(ending)) continue;
-          endingCounts[ending]++;
-          eligible.push({ mac, ending });
-          if (history.macs.has(mac)) usedEligible.add(mac);
+        const config = this.currentConfig();
+        fullToken = String(extractConfigKeys(config.files[".config"]).key_sn_token_unitvfree || "").trim();
+        if (!/^[0-9a-f]+$/i.test(fullToken) || fullToken.length < 4) {
+          throw new Error("A chave completa não foi encontrada na configuração.");
         }
-        const savedByMac = new Map();
-        for (const record of saved) {
-          const mac = String(record.mac || "").trim().toUpperCase();
-          if (!mac || typeof record.content !== "string" || !record.content) continue;
-          const keys = extractConfigKeys(record.content);
-          const token = String(keys.key_sn_token_unitvfree || "").toUpperCase();
-          const ending = ALLOWED_TOKEN_ENDINGS.find(end => token.endsWith(end));
-          if (!ending) continue;
-          if (!savedByMac.has(mac)) savedByMac.set(mac, []);
-          savedByMac.get(mac).push({ record, ending });
+        try {
+          await navigator.clipboard.writeText(fullToken);
+        } catch (_) {
+          const field = document.createElement("textarea");
+          field.value = fullToken;
+          field.setAttribute("readonly", "");
+          field.style.position = "fixed";
+          field.style.opacity = "0";
+          document.body.append(field);
+          field.select();
+          if (!document.execCommand("copy")) {
+            throw new Error("Não foi possível copiar para a área de transferência.");
+          }
+          field.remove();
         }
-        const available = eligible.filter(item => !history.macs.has(item.mac));
-        const savedMatches = eligible.flatMap(item => savedByMac.get(item.mac) || []);
-        const legacyOnly = eligible.filter(item => history.macs.has(item.mac) && !savedByMac.has(item.mac));
-        const summary = document.createElement("p");
-        summary.className = "field-hint";
-        summary.textContent = `${eligible.length} MACs compatíveis · ${usedEligible.size} já usados · ${available.length} disponíveis · ${savedMatches.length} arquivos .config recuperáveis · ${legacyOnly.length} MACs usados sem arquivo salvo.`;
-        results.append(summary);
-        const details = document.createElement("details");
-        const heading = document.createElement("summary");
-        heading.textContent = "Quantidade por final da key";
-        const values = document.createElement("p");
-        values.textContent = ALLOWED_TOKEN_ENDINGS.map(end => `${end}: ${endingCounts[end]}`).join(" · ");
-        details.append(heading, values);
-        results.append(details);
-        for (const {record, ending} of savedMatches) {
-          if (this.filterStopRequested) break;
-          const filename = record.filename || randomConfigFilename();
-          const index = this.filteredResults.push({ content: record.content, filename, ending }) - 1;
-          const article = document.createElement("article");
-          article.className = "panel";
-          article.style.cssText = "padding:12px;margin:10px 0;overflow-wrap:anywhere";
-          const title = document.createElement("p");
-          title.textContent = `Salva — MAC ${record.mac} — final ${ending} — ${filename}`;
-          const button = document.createElement("button");
-          button.className = "button button-outline";
-          button.textContent = "Baixar .config individual";
-          button.dataset.action = "download-filtered";
-          button.dataset.filterIndex = String(index);
-          article.append(title, button);
-          results.append(article);
-        }
-        if (legacyOnly.length) {
-          const warning = document.createElement("p");
-          warning.className = "field-hint";
-          warning.textContent = `${legacyOnly.length} MACs compatíveis constam como usados, mas não possuem arquivo .config salvo neste navegador. Não é possível recuperar o arquivo original somente pelo histórico de MACs.`;
-          results.append(warning);
-        }
-        if (!savedMatches.length) {
-          const notice = document.createElement("p");
-          notice.textContent = "Nenhum arquivo .config compatível está armazenado neste navegador. O histórico de identificadores, sozinho, não contém os arquivos originais.";
-          results.append(notice);
-        }
-        status.textContent = `${this.filterStopRequested ? "Consulta interrompida" : "Consulta concluída"}: ${savedMatches.length} arquivos salvos encontrados; ${available.length} MACs compatíveis ainda disponíveis. Nenhum identificador foi alterado.`;
+        this.toast(`Key completa copiada (final ${fullToken.slice(-4).toUpperCase()}).`);
       } catch (error) {
-        status.textContent = `Falha na consulta: ${error.message}`;
-        this.toast(error.message || "Erro ao consultar histórico.", "error");
-      } finally {
-        this.filterRunning = false;
-        start.disabled = false;
-        stop.disabled = true;
+        this.toast(error.message || "Não foi possível copiar a key.", "error");
       }
     }
-
-    currentConfig() {
-      // Usa os dados exibidos, sem sortear novos identificadores ao baixar.
-      return this.makeConfig();
+    async deleteAndroidConfig() {
+      try {
+        await deleteConfigInAndroid((msg, tone) => this.toast(msg, tone));
+      } catch (error) {
+        this.toast(`Falha ao excluir: ${error.message}`, "error");
+      }
     }
-
+    async installSelectedConfig() {
+      try {
+        const file = q(this, "#android-config-file").files?.[0];
+        if (!file) throw new Error("Toque em Escolher arquivo e selecione um .config.");
+        if (!file.name.toLowerCase().endsWith(".config")) {
+          throw new Error("Escolha um arquivo cujo nome termine em .config.");
+        }
+        if (file.size > 1024 * 1024) throw new Error("O arquivo .config deve ter ate 1 MB.");
+        await installConfigInAndroid(await file.text(), (msg, tone) => this.toast(msg, tone));
+      } catch (error) {
+        this.toast(`Falha ao copiar: ${error.message}`, "error");
+      }
+    }
+    async installGeneratedConfig() {
+      try {
+        const config = this.currentConfig();
+        await installConfigInAndroid(config.files[".config"], (msg, tone) => this.toast(msg, tone));
+      } catch (error) {
+        this.toast(`Falha ao copiar: ${error.message}`, "error");
+      }
+    }
+    currentConfig() {
+      if (!this.acceptedConfig || !matchesEndings(this.acceptedConfig, this.acceptedEndings || [])) throw new Error("Clique em Gerar config para criar uma key com o final solicitado.");
+      return this.acceptedConfig;
+    }
     async copyCurrent() {
       const content = this.files[this.currentFile] || "";
-      try {
-        await navigator.clipboard.writeText(content);
-      } catch (_) {
-        const field = document.createElement("textarea");
-        field.value = content;
-        document.body.append(field);
-        field.select();
-        document.execCommand("copy");
-        field.remove();
+      if (!content) return this.toast("Gere a configuração primeiro.", "error");
+      try { await navigator.clipboard.writeText(content); }
+      catch (_) {
+        const field = document.createElement("textarea"); field.value = content;
+        document.body.append(field); field.select(); document.execCommand("copy"); field.remove();
       }
       this.toast("Conteúdo copiado.");
     }
-
     downloadCurrent() {
       if (this.currentFile === ".config") return this.downloadConfig();
-      const content = this.files[this.currentFile] || "";
-      if (!content) return this.toast("Gere a configuração primeiro.", "error");
-      downloadBlob(new Blob([content], { type: "application/octet-stream" }), this.currentFile);
-      this.toast(`${this.currentFile} baixado.`);
+      try {
+        this.currentConfig();
+        const content = this.files[this.currentFile] || "";
+        if (!content) throw new Error("Arquivo vazio.");
+        downloadBlob(new Blob([content], { type: "application/octet-stream" }), this.currentFile);
+        this.toast(`${this.currentFile} baixado.`);
+      } catch (error) { this.toast(error.message, "error"); }
     }
-
     downloadConfig() {
       try {
         const config = this.currentConfig();
-        if (!config.files[".config"]) throw new Error("Arquivo .config vazio.");
-        downloadBlob(new Blob([config.files[".config"]], { type: "application/octet-stream" }), randomConfigFilename());
+        const records = readConfigRecords();
+        const content = config.files[".config"];
+        const index = records.findIndex(record => record.content === content);
+        const filename = configFilenameFor(content, index >= 0 ? index + 1 : records.length + 1);
+        downloadBlob(new Blob([content], { type: "application/octet-stream" }), filename);
         this.toast("Arquivo .config enviado para download.");
-      } catch (error) {
-        this.toast(`Falha no download: ${error.message}`, "error");
-      }
+      } catch (error) { this.toast(`Falha no download: ${error.message}`, "error"); }
     }
-
     downloadZip() {
       try {
         const config = this.currentConfig();
         downloadBlob(ConfigCore.createZip(zipEntries(config)), `${config.folder_name}.zip`);
         this.toast("Pacote ZIP enviado para download.");
-      } catch (error) {
-        this.toast(`Falha no ZIP: ${error.message}`, "error");
-      }
+      } catch (error) { this.toast(`Falha no ZIP: ${error.message}`, "error"); }
     }
-
     async saveFolder() {
       try {
         const config = this.currentConfig();
         const result = await saveConfig(config);
         if (result === "folder") this.toast(`Arquivos salvos na pasta ${config.folder_name}.`);
         if (result === "zip") this.toast("Download do ZIP iniciado.");
-      } catch (error) {
-        this.toast(`Falha ao salvar: ${error.message}`, "error");
-      }
+      } catch (error) { this.toast(`Falha ao salvar: ${error.message}`, "error"); }
     }
   }
-
   class HistoryView extends ViewElement {
     connectedCallback() {
       this.innerHTML = `
         <section class="panel panel-pad" style="padding:20px">
           <h2>Histórico de Keys</h2>
-          <p class="field-hint">Registros deste navegador, a partir desta atualização. Tokens são dados sensíveis: não compartilhe capturas com as keys visíveis.</p>
+          <p class="field-hint">Registros salvos neste navegador. Não compartilhe capturas com as keys visíveis.</p>
           <div class="field" style="margin:16px 0">
             <label for="history-search">Pesquisar MAC, User ID ou token</label>
             <input id="history-search" placeholder="Digite o identificador ou a key" autocomplete="off">
           </div>
-          <div class="button-row" style="margin:12px 0">
-            <button class="button button-primary" data-action="export-history" type="button">Exportar Filtradas em ZIP (.config)</button>
-            <button class="button button-outline" data-action="clear-history" type="button" style="border-color:#b91c1c;color:#b91c1c">Limpar Histórico</button>
+          <div class="field" style="margin:12px 0">
+            <label for="history-ending">Filtrar final da key</label>
+            <select id="history-ending" style="width:100%;padding:10px">
+              <option value="all">Todas as keys</option>
+              <option value="allowed">Somente os 5 finais padrão</option>
+              <!-- Opções reais são adicionadas abaixo após ler ConfigCore.encodeSnToken -->
+            </select>
           </div>
-          <p class="field-hint">Baixa um ZIP com cada .config filtrado em arquivo separado. Somente arquivos realmente salvos neste navegador; não altera o histórico.</p>
-          <p data-history-count></p>
-          <div data-history-results></div>
+          <div class="button-row" style="margin:12px 0;display:flex;flex-wrap:wrap;gap:10px">
+            <button class="button button-primary" type="button" data-history-zip>Baixar ZIP das keys filtradas</button>
+            <button class="button button-outline" type="button" data-history-clear>Excluir histórico das keys</button>
+          </div>
+          <p class="field-hint">O ZIP incluirá somente os arquivos .config exibidos pelos filtros de final e pesquisa acima, sem apagar o histórico.</p>
+          <p data-history-count></p><div data-history-results></div>
         </section>`;
-      this.querySelector("#history-search").addEventListener("input", () => this.render());
+      // Exibe todos os finais reconhecidos pelo core.js. Também inclui finais
+      // que já existem nos registros, caso tenham vindo de uma versão anterior.
+      const endingValues = new Set(supportedEndingMap().keys());
+      try {
+        readConfigRecords().forEach(record => {
+          const ending = tokenEnding(record.content || "");
+          if (/^[0-9A-F]{4}$/.test(ending)) endingValues.add(ending);
+        });
+      } catch (_) { /* histórico inválido será informado no render() */ }
+      const endingSelect = q(this, "#history-ending");
+      for (const ending of [...endingValues].sort()) {
+        const option = document.createElement("option");
+        option.value = ending;
+        option.textContent = `Final ${ending}`;
+        endingSelect.append(option);
+      }
+      q(this, "#history-search").addEventListener("input", () => this.render());
+      endingSelect.addEventListener("change", () => this.render());
       this.addEventListener("click", event => {
-        if (event.target.closest('[data-action="clear-history"]')) {
-          const count = readConfigRecords().length;
-          if (!window.confirm(`ATENÇÃO: Apagar ${count} configurações salvas e todos os MACs, User IDs e Device IDs usados neste navegador? Esta ação não pode ser desfeita. Faça backup antes de continuar.`)) return;
-          if (!window.confirm("Confirma a exclusão DEFINITIVA do Histórico de Keys?")) return;
+        if (event.target.closest("[data-history-zip]")) {
+          this.downloadFilteredZip();
+          return;
+        }
+        if (event.target.closest("[data-history-clear]")) {
+          if (!window.confirm("Excluir permanentemente todo o histórico de keys deste navegador?")) return;
+          if (!window.confirm("Confirma a exclusão? Essa ação não pode ser desfeita.")) return;
           try {
             localStorage.removeItem(CONFIG_RECORDS_KEY);
             localStorage.removeItem(HISTORY_KEY);
-            this.querySelector("#history-search").value = "";
-            this.render();
-            this.toast("Histórico de Keys apagado deste navegador.");
-          } catch (error) {
-            this.toast(`Falha ao limpar histórico: ${error.message}`, "error");
-          }
+            this.render(); this.toast("Histórico de keys excluído.");
+          } catch (error) { this.toast(`Falha ao excluir histórico: ${error.message}`, "error"); }
           return;
         }
-        if (event.target.closest('[data-action="export-history"]')) {
+        const installButton = event.target.closest("[data-history-install]");
+        if (installButton) {
           try {
-            const records = readConfigRecords().filter(record => {
-              if (typeof record.content !== "string" || !record.content) return false;
-              const token = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "").trim().toUpperCase();
-              return ALLOWED_TOKEN_ENDINGS.some(ending => token.endsWith(ending));
-            });
-            if (!records.length) {
-              this.toast("Nenhuma configuração filtrada salva neste navegador.", "error");
-              return;
-            }
-            // Cada registro salvo vira um arquivo .config individual no ZIP.
-            // Nomes sequenciais evitam colisões e não expõem keys no nome.
-            const entries = records.map((record, index) => {
-              const ending = String(extractConfigKeys(record.content).key_sn_token_unitvfree || "")
-                .trim().toUpperCase().slice(-4);
-              return {
-                name: `CONFIG_${String(index + 1).padStart(4, "0")}_FINAL_${ending}.config`,
-                content: record.content
-              };
-            });
-            const filename = `CONFIGS_FILTRADAS_${new Date().toISOString().slice(0, 10)}.zip`;
-            downloadBlob(ConfigCore.createZip(entries), filename);
-            this.toast(`${records.length} arquivos .config individuais exportados em ZIP.`);
+            const record = readConfigRecords().find(r => r.id === installButton.dataset.historyInstall);
+            if (!record) throw new Error("Registro nao encontrado.");
+            installConfigInAndroid(record.content, (msg, tone) => this.toast(msg, tone))
+              .catch(error => this.toast(`Falha ao copiar: ${error.message}`, "error"));
           } catch (error) {
-            this.toast(`Falha ao exportar histórico: ${error.message}`, "error");
+            this.toast(`Falha ao copiar: ${error.message}`, "error");
           }
           return;
         }
         const button = event.target.closest("[data-history-download]");
         if (!button) return;
-        const record = readConfigRecords().find(r => r.id === button.dataset.historyDownload);
-        if (!record) return this.toast("Registro não encontrado.", "error");
-        downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), record.filename);
-        this.toast("Download do arquivo .config iniciado.");
+        try {
+          const record = readConfigRecords().find(r => r.id === button.dataset.historyDownload);
+          if (!record) throw new Error("Registro não encontrado.");
+          downloadBlob(new Blob([record.content], { type: "application/octet-stream" }), individualConfigFilename(record));
+          this.toast("Download do arquivo .config iniciado.");
+        } catch (error) { this.toast(error.message, "error"); }
       });
       this.render();
     }
-
+    filteredRecords(records) {
+      // Mesma filtragem aplicada à lista visível e ao ZIP.
+      const search = q(this, "#history-search").value.trim().toLowerCase();
+      const selectedEnding = q(this, "#history-ending").value;
+      return records.filter(record => {
+        const token = String(extractConfigKeys(record.content || "").key_sn_token_unitvfree || "").trim().toUpperCase();
+        const ending = token.slice(-4);
+        const allowed = selectedEnding === "all" ||
+          (selectedEnding === "allowed" ? ALLOWED_TOKEN_ENDINGS.includes(ending) : ending === selectedEnding);
+        return allowed && [record.mac, record.userId, record.deviceId, ...Object.values(record.keys || {}), token]
+          .some(value => String(value || "").toLowerCase().includes(search));
+      });
+    }
+    downloadFilteredZip() {
+      try {
+        const records = readConfigRecords();
+        const matches = this.filteredRecords(records).filter(record => typeof record.content === "string" && record.content.length > 0);
+        if (!matches.length) {
+          this.toast("Nenhuma key corresponde aos filtros. Ajuste o filtro ou a pesquisa antes de baixar.", "error");
+          return;
+        }
+        // Mantém a numeração original do histórico mesmo quando apenas parte dele é exportada.
+        const positions = new Map(records.map((record, index) => [record, index + 1]));
+        const entries = matches.map(record => ({
+          name: `KEYS_FILTRADAS/${configFilenameFor(record.content, positions.get(record))}`,
+          content: record.content
+        }));
+        const selectedEnding = q(this, "#history-ending").value;
+        const label = selectedEnding === "all" ? "TODAS" : selectedEnding === "allowed" ? "5_FINAIS" : selectedEnding;
+        const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15);
+        const filename = `KEYS_FILTRADAS_${label}_${stamp}.zip`;
+        downloadBlob(ConfigCore.createZip(entries), filename);
+        this.toast(`ZIP de ${entries.length} arquivo(s) .config enviado para download.`);
+      } catch (error) {
+        this.toast(`Falha ao preparar ZIP: ${error.message}`, "error");
+      }
+    }
     render() {
       let records;
       try { records = readConfigRecords(); }
-      catch (error) {
-        q(this, "[data-history-count]").textContent = error.message;
-        return;
-      }
-      const search = q(this, "#history-search").value.trim().toLowerCase();
-      const matches = records.filter(r => [r.mac, r.userId, r.deviceId,
-        ...Object.values(r.keys || {})].some(v => String(v || "").toLowerCase().includes(search)));
+      catch (error) { q(this, "[data-history-count]").textContent = error.message; return; }
+      const matches = this.filteredRecords(records);
       q(this, "[data-history-count]").textContent = `${matches.length} de ${records.length} configurações registradas`;
       q(this, "[data-history-results]").innerHTML = matches.length ? matches.slice().reverse().map(r => `
         <article class="panel" style="padding:16px;margin:12px 0;overflow-wrap:anywhere">
@@ -648,19 +681,19 @@ function randomUniqueUser(history) {
             <p><strong>key_sn_token_unitvfree</strong><br><code>${escapeHtml(r.keys?.key_sn_token_unitvfree || "Não encontrada")}</code></p>
           </details>
           <button class="button button-outline" style="margin-top:12px" data-history-download="${escapeHtml(r.id)}">Baixar .config novamente</button>
+          <button class="button button-primary" type="button" style="margin-top:12px" data-history-install="${escapeHtml(r.id)}">Instalar este .config na pasta Android</button>
         </article>`).join("") : "<p>Nenhuma configuração encontrada.</p>";
     }
   }
-
   class AppsView extends ViewElement {
     connectedCallback() {
       this.innerHTML = `
         <section class="section-head"><div><p class="eyebrow">PACOTES LOCAIS</p><h2>Aplicativos</h2><p>APKs disponíveis na pasta de recursos ao lado desta versão.</p></div></section>
         <div class="apk-grid">
           <article class="apk-item"><div><span class="apk-type">Versão recomendada</span><h3>UniTV Free 5.9.0</h3></div><p>Versão mais recente listada no repositório local.</p><a class="button button-primary" href="apps/UniTV%20Free%205.9.0.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.8.0</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="apps/UniTV%20Free%205.8.0.apk" download>Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Aplicativo Ativa</span><h3>Ativa.apk</h3></div><p>Baixe o aplicativo Ativa pelo GitHub Releases.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/v1.0/ativa.apk">Baixar APK</a></article>
-          <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="apps/ativadorUniTVFree.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Versão clássica</span><h3>UniTV Free 5.7.2</h3></div><p>Versão anterior mantida para compatibilidade com dispositivos.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/V5.7.2/uvFree_5.7.2.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Versão legada</span><h3>UniTV Free 5.4.1</h3></div><p>Pacote antigo disponível no diretório de aplicativos.</p><a class="button button-primary" href="https://github.com/nilsonbastos/unitv-config/releases/download/v5.4.1/UniTV.Free.5.4.1.apk" download>Baixar APK</a></article>
+          <article class="apk-item"><div><span class="apk-type">Ferramenta</span><h3>Ativador UniTV Free</h3></div><p>Seleciona um <code>.config</code> e o copia para <code>Android/.config</code>, substituindo o arquivo existente.</p><a class="button button-primary" href="UniTVFree.apk" download>Baixar APK</a></article>
         </div>
         <section class="manual-guide" aria-labelledby="manual-guide-title">
           <div class="section-head"><div><p class="eyebrow">TROCA MANUAL</p><h2 id="manual-guide-title">Substituir o .config no Android</h2><p>Use estas etapas quando preferir copiar o arquivo pelo gerenciador de arquivos do dispositivo.</p></div></div>
@@ -669,48 +702,39 @@ function randomUniqueUser(history) {
             <article class="manual-card"><span class="manual-step">02</span><h3>Exiba arquivos ocultos</h3><p>Ative “Mostrar arquivos ocultos” nas opções do gerenciador. Como o nome começa com ponto, o arquivo <code>.config</code> fica oculto por padrão.</p></article>
             <article class="manual-card"><span class="manual-step">03</span><h3>Substitua e reabra</h3><p>Faça uma cópia do arquivo atual se precisar preservá-lo. Copie o novo arquivo para a pasta <code>Android</code> e renomeie-o exatamente para <code>.config</code>, confirmando a substituição. Depois, abra o UniTV Free novamente.</p></article>
           </div>
-          <p class="manual-guide-note">Algumas versões do Android ou gerenciadores de arquivos restringem a pasta <code>Android</code>. Se não conseguir gravar nela, tente outro gerenciador com permissão para acessar o armazenamento compartilhado.</p>
+          <p class="manual-guide-note">Algumas versões do Android ou gerenciadores de arquivos restringem a pasta <code>Android</code>.</p>
         </section>`;
     }
   }
-
   class StudioApp extends HTMLElement {
     connectedCallback() {
       this.innerHTML = `
-        <header class="topbar"><div class="topbar-inner">
-          <div class="brand"><img src="img/logo.webp" alt=""><div><div class="brand-name">Plataforma de Configurações</div><div class="brand-kicker">ferramentas locais</div></div></div>
-          <div class="local-signal" title="Execução no navegador">Gerando Config...</div>
-        </div></header>
+        <header class="topbar"><div class="topbar-inner"><div class="brand"><img src="img/logo.webp" alt=""><div><div class="brand-name">Plataforma de Configurações</div><div class="brand-kicker">ferramentas locais</div></div></div><div class="local-signal" title="Execução no navegador">Gerando Config...</div></div></header>
         <main class="workspace">
           <div class="page-heading"><div><p class="eyebrow">CONFIGURAÇÕES</p><h1 data-page-title>Gerador .config / Nilson Bastos</h1></div><p class="heading-note" data-page-note>Gerador de arquivo 2027</p></div>
           <nav class="view-tabs" aria-label="Seções">
             <button class="view-tab" data-view="generator" aria-selected="true">Gerador 2027</button>
             <button class="view-tab" data-view="apps" aria-selected="false">Aplicativos</button>
-              <button class="view-tab" data-view="history" aria-selected="false">Histórico de Keys</button>
+            <button class="view-tab" data-view="history" aria-selected="false">Histórico de Keys</button>
           </nav>
           <section class="view-panel" data-panel="generator"><single-generator-view></single-generator-view></section>
           <section class="view-panel" data-panel="apps" hidden><apps-view></apps-view></section>
           <section class="view-panel" data-panel="history" hidden><history-view></history-view></section>
-          <footer class="footer-note">
-            <span>HTML5 · CSS3 · JS Vanilla· Web Components</span>
+          <footer class="footer-note"><span>HTML5 · CSS3 · JS Vanilla · Web Components</span>
             <nav class="footer-actions" aria-label="Links do projeto">
-              <a class="support-link" href="https://w.app/wm8bxj" target="_blank" rel="noopener noreferrer">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-                Contribuir no GitHub
-              </a>
-              <a class="support-link support-pix" href="https://w.app/wm8bxj" target="_blank" rel="noopener noreferrer">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7-4.35-9.33-8.28C.4 8.5 3.4 4 7.9 4c1.7 0 3.2.8 4.1 2.1C12.9 4.8 14.4 4 16.1 4c4.5 0 7.5 4.5 5.2 8.72C19 16.65 12 21 12 21Z"/></svg>
-                Apoiar via Pix
-              </a>
+              <a class="support-link" href="https://w.app/wm8bxj" target="_blank" rel="noopener noreferrer">Contribuir no GitHub</a>
+              <a class="support-link support-pix" href="https://w.app/wm8bxj" target="_blank" rel="noopener noreferrer">Apoiar via Pix</a>
             </nav>
           </footer>
-        </main>
-        <div class="toast" role="status" aria-live="polite"></div>`;
-
+        </main><div class="toast" role="status" aria-live="polite"></div>`;
       this.addEventListener("click", event => this.onNavigation(event));
       this.addEventListener("studio-toast", event => this.showToast(event.detail));
+      // Aviso real de sucesso/erro informado pelo codigo Android nativo.
+      window.addEventListener("android-config-install-result", event => {
+        const detail = event.detail || {};
+        this.showToast({ message: detail.message || "Operacao concluida no Android.", tone: detail.success ? "success" : "error" });
+      });
     }
-
     onNavigation(event) {
       const button = event.target.closest("[data-view]");
       if (!button) return;
@@ -724,7 +748,6 @@ function randomUniqueUser(history) {
         : "Gere, revise e salve arquivos diretamente no navegador. Os valores ficam no dispositivo.";
       if (view === "history") q(this, "history-view")?.render();
     }
-
     showToast(detail) {
       const toast = q(this, ".toast");
       toast.textContent = detail.message;
@@ -734,9 +757,9 @@ function randomUniqueUser(history) {
       this.toastTimer = setTimeout(() => { toast.dataset.visible = "false"; }, 3400);
     }
   }
-
   customElements.define("single-generator-view", SingleGeneratorView);
   customElements.define("apps-view", AppsView);
   customElements.define("history-view", HistoryView);
   customElements.define("studio-app", StudioApp);
 })();
+
