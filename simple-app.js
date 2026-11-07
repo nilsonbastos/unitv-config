@@ -1,3 +1,4 @@
+
 (function () {
   const q = (root, selector) => root.querySelector(selector);
 
@@ -780,6 +781,12 @@ function randomUniqueUser(history) {
             </button>
           </div>
 
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+            <button type="button" class="button button-outline" data-import-clear>
+              Limpar arquivos importados
+            </button>
+          </div>
+
           <div data-import-results></div>
 
           <div style="margin-top:18px">
@@ -812,6 +819,9 @@ function randomUniqueUser(history) {
 
       this.querySelector("[data-import-install]")
         .addEventListener("click", () => this.installSelected());
+
+      this.querySelector("[data-import-clear]")
+        .addEventListener("click", () => this.clearImported());
     }
 
     async readFiles() {
@@ -916,25 +926,50 @@ function randomUniqueUser(history) {
         return;
       }
 
-      if (typeof installConfigInAndroid !== "function") {
-        status.textContent =
-          "A função de instalação Android não foi encontrada no aplicativo.";
-        return;
-      }
-
       const item = this.filesData[index];
 
-      status.textContent = "Enviando configuração para instalação...";
-
       try {
-        await installConfigInAndroid(item.content, (message) => {
-          status.textContent = String(message);
-        });
+        if (typeof downloadBlob !== "function") {
+          throw new Error("A função de download não foi encontrada.");
+        }
+
+        status.textContent = "Preparando download de " + item.name + "...";
+
+        downloadBlob(
+          new Blob([item.content], {
+            type: "application/octet-stream"
+          }),
+          item.name
+        );
+
+        status.textContent =
+          "Download solicitado: " + item.name +
+          ". Verifique a pasta padrão de downloads.";
       } catch (error) {
         status.textContent =
-          "Não foi possível instalar: " +
+          "Falha no download: " +
           (error?.message || String(error));
       }
+    }
+
+    clearImported() {
+      this.filesData = [];
+
+      const input = this.querySelector("#import-config-files");
+      const results = this.querySelector("[data-import-results]");
+      const select = this.querySelector("#import-config-select");
+      const status = this.querySelector("[data-import-status]");
+
+      input.value = "";
+      results.replaceChildren();
+      select.replaceChildren();
+
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Selecione um arquivo válido";
+      select.appendChild(option);
+
+      status.textContent = "Arquivos importados removidos da tela.";
     }
   }
   class StudioApp extends HTMLElement {
